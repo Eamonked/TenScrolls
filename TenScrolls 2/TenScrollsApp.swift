@@ -1,17 +1,14 @@
-//
-//  TenScrollsApp.swift
-//  TenScrolls
-//
-//  Created by eamon kendrick on 7/3/26.
-//
-
 import SwiftUI
 
 @main
 struct TenScrollsApp: App {
+    @StateObject private var store = AppStore()
+
     var body: some Scene {
         WindowGroup {
             ContentView()
+                .environmentObject(store)
+                .preferredColorScheme(.dark)
         }
     }
 }
