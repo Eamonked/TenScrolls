@@ -18,6 +18,8 @@ struct DayEntry: Codable, Equatable {
     var dawn: Bool = false
     var midday: Bool = false
     var dusk: Bool = false
+    /// Optional reason recorded when a user un-stamps a session or reflects on a missed day.
+    var skipReason: String? = nil
 
     var allComplete: Bool { dawn && midday && dusk }
     var sessionCount: Int { [dawn, midday, dusk].filter { $0 }.count }
@@ -104,6 +106,19 @@ struct JournalEntry: Identifiable, Codable, Equatable {
     var text: String
 }
 
+/// Tracks the rereading loop that begins once all ten scrolls are mastered.
+/// The practice is repetition-based, so instead of "read once, achievement
+/// unlocked" the reader revisits one scroll at a time on a rotation. Reads use
+/// the same three-session ritual as the first pass, so streaks and XP continue.
+struct CycleState: Codable, Equatable {
+    /// Which pass through the ten scrolls this is (2 = second pass, and so on).
+    var cycle: Int = 2
+    /// The scroll currently being revisited (1...10).
+    var currentScrollId: Int = 1
+    /// Date keys ("yyyy-MM-dd") fully completed for the current scroll this pass.
+    var daysThisScroll: [String] = []
+}
+
 struct AchievementDef: Identifiable {
     let id: String
     let name: String
@@ -136,6 +151,8 @@ enum Constants {
         "Renowned Merchant", "Legendary Trader", "Master of Commerce", "Grand Merchant"
     ]
     static let milestones = [7, 14, 30, 60, 100]
+    /// Days of revisiting a scroll before the reread rotation advances to the next.
+    static let cycleGoalDays = 7
 
     static let achievementDefs: [AchievementDef] = [
         AchievementDef(id: "first-seal", name: "First Seal", desc: "Complete your first reading session") { $0.totalSessionsCompleted >= 1 },

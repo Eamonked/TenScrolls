@@ -225,3 +225,21 @@ struct GhostButtonStyle: ButtonStyle {
             .overlay(RoundedRectangle(cornerRadius: 12).stroke(Palette.inkLine, lineWidth: 1))
     }
 }
+
+extension View {
+    func hideNavigationBar() -> some View {
+        #if os(iOS)
+        self.navigationBarHidden(true)
+        #else
+        self
+        #endif
+    }
+
+    func inlineNavigationBarTitle() -> some View {
+        #if os(iOS)
+        self.navigationBarTitleDisplayMode(.inline)
+        #else
+        self
+        #endif
+    }
+}

@@ -3,6 +3,7 @@ import SwiftUI
 struct JournalView: View {
     @EnvironmentObject var store: AppStore
     var openJournal: () -> Void
+    var openSearch: () -> Void
 
     var theme: ThemeOption { Palette.theme(for: store.state.activeThemeId) }
 
@@ -19,14 +20,26 @@ struct JournalView: View {
                         Text("Journal").font(AppFont.display(28)).foregroundColor(Palette.text)
                     }
                     Spacer()
-                    Button(action: openJournal) {
-                        Image(systemName: "plus")
-                            .foregroundColor(Palette.textDim)
-                            .frame(width: 36, height: 36)
-                            .background(Circle().fill(Palette.ink2))
-                            .overlay(Circle().stroke(Palette.inkLine, lineWidth: 1))
+                    
+                    HStack(spacing: 12) {
+                        Button(action: openSearch) {
+                            Image(systemName: "magnifyingglass")
+                                .foregroundColor(Palette.textDim)
+                                .frame(width: 36, height: 36)
+                                .background(Circle().fill(Palette.ink2))
+                                .overlay(Circle().stroke(Palette.inkLine, lineWidth: 1))
+                        }
+                        .buttonStyle(.plain)
+                        
+                        Button(action: openJournal) {
+                            Image(systemName: "plus")
+                                .foregroundColor(Palette.textDim)
+                                .frame(width: 36, height: 36)
+                                .background(Circle().fill(Palette.ink2))
+                                .overlay(Circle().stroke(Palette.inkLine, lineWidth: 1))
+                        }
+                        .buttonStyle(.plain)
                     }
-                    .buttonStyle(.plain)
                 }
 
                 if sortedEntries.isEmpty {

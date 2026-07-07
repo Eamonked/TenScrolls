@@ -1,5 +1,10 @@
 import SwiftUI
+#if canImport(UIKit)
 import UIKit
+#elseif canImport(AppKit)
+import AppKit
+#endif
+
 
 struct CaravanView: View {
     @EnvironmentObject var store: AppStore
@@ -102,7 +107,13 @@ struct CaravanView: View {
                     .font(AppFont.mono(12.5)).tracking(1.2).foregroundColor(theme.brass)
                 Spacer()
                 Button {
+                    #if canImport(UIKit)
                     UIPasteboard.general.string = store.state.traderCode
+                    #elseif canImport(AppKit)
+                    let pasteboard = NSPasteboard.general
+                    pasteboard.clearContents()
+                    pasteboard.setString(store.state.traderCode, forType: .string)
+                    #endif
                     copied = true
                     DispatchQueue.main.asyncAfter(deadline: .now() + 1.8) { copied = false }
                 } label: {
@@ -135,7 +146,9 @@ struct CaravanView: View {
                 HStack(spacing: 8) {
                     TextField("Enter their trader code…", text: $friendInput)
                         .textFieldStyle(AppTextFieldStyle())
+                        #if os(iOS)
                         .textInputAutocapitalization(.characters)
+                        #endif
                         .onSubmit(submitFriend)
                     Button(action: submitFriend) {
                         Image(systemName: "person.badge.plus")

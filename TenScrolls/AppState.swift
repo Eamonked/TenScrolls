@@ -15,6 +15,12 @@ struct AppState: Codable, Equatable {
     /// Optional so state persisted before this feature existed still decodes cleanly
     /// (a missing key becomes nil rather than throwing and wiping progress).
     var notifications: NotificationPrefs? = nil
+    /// Reasons for missed days, keyed by date string ("yyyy-MM-dd").
+    /// Stored separately from the log so days with zero sessions still get a reason.
+    var missedDayReasons: [String: String]? = nil
+    var lastWeeklyRecapDate: String? = nil
+    /// Non-nil once the reader has begun rereading after mastering all ten scrolls.
+    var cycleState: CycleState? = nil
 
     /// Reminder settings with sane defaults when none have been persisted yet.
     var notifPrefs: NotificationPrefs { notifications ?? NotificationPrefs() }
@@ -71,6 +77,22 @@ enum DateKey {
 
 extension AppState {
     var activeScroll: Scroll? { scrolls.first(where: { $0.status == .active }) }
+
+    /// Every scroll mastered — the first pass is complete and cycle mode is available.
+    var allScrollsMastered: Bool { scrolls.allSatisfy { $0.status == .mastered } }
+
+    /// True while the reader is in the rereading loop.
+    var isCycleActive: Bool { cycleState != nil && allScrollsMastered }
+
+    /// The scroll currently being revisited in cycle mode, if any.
+    var rereadScroll: Scroll? {
+        guard let cs = cycleState, allScrollsMastered else { return nil }
+        return scrolls.first { $0.id == cs.currentScrollId }
+    }
+
+    /// The scroll today's sessions should be logged against: the active scroll on
+    /// the first pass, or the reread scroll once in cycle mode.
+    var targetScrollId: Int? { activeScroll?.id ?? rereadScroll?.id }
 
     func scrollDaysCompleted(_ scrollId: Int) -> Int {
         log.values.filter { $0.scrollId == scrollId && $0.allComplete }.count

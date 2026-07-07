@@ -20,7 +20,7 @@ struct ScrollsView: View {
                 ForEach(store.state.scrolls) { scroll in
                     ScrollRow(scroll: scroll, days: store.state.scrollDaysCompleted(scroll.id), theme: theme)
                         .onTapGesture {
-                            if scroll.status != .locked { onOpenScroll(scroll.id) }
+                            onOpenScroll(scroll.id)
                         }
                 }
                 Color.clear.frame(height: 10)
@@ -65,14 +65,12 @@ private struct ScrollRow: View {
                     .font(AppFont.mono(10.5)).foregroundColor(Palette.textFaint)
             }
             Spacer()
-            if scroll.status != .locked {
-                Image(systemName: "chevron.right").font(.system(size: 13)).foregroundColor(Palette.textFaint)
-            }
+            Image(systemName: "chevron.right").font(.system(size: 13)).foregroundColor(Palette.textFaint)
         }
         .padding(14)
         .background(Palette.ink2)
         .overlay(RoundedRectangle(cornerRadius: 16).stroke(Palette.inkLine, lineWidth: 1))
         .clipShape(RoundedRectangle(cornerRadius: 16))
-        .opacity(scroll.status == .locked ? 0.52 : 1)
+        .opacity(scroll.status == .locked ? 0.7 : 1)
     }
 }

@@ -5,6 +5,8 @@ struct TodayView: View {
     var openJournal: () -> Void
     var openInfo: () -> Void
     var openNotifSettings: () -> Void
+    var promptSkip: (String) -> Void
+    var openScroll: (Scroll) -> Void
     @State private var newHabit = ""
 
     var theme: ThemeOption { Palette.theme(for: store.state.activeThemeId) }
@@ -18,7 +20,9 @@ struct TodayView: View {
 
                 activeScrollCard
 
-                stamps
+                if store.state.targetScrollId != nil {
+                    stamps
+                }
 
                 streakRow
 
@@ -101,27 +105,69 @@ struct TodayView: View {
                     .font(AppFont.mono(11)).foregroundColor(Palette.textFaint)
                     .padding(.top, 7)
             }
+        } else if let reread = store.state.rereadScroll, let cs = store.state.cycleState {
+            let done = cs.daysThisScroll.count
+            let goal = Constants.cycleGoalDays
+            CardView {
+                HStack {
+                    Text("CYCLE \(cs.cycle) · REVISITING").font(AppFont.mono(10)).tracking(1.4).foregroundColor(Palette.textFaint)
+                    Spacer()
+                    Text("SCROLL \(reread.roman) OF X").font(AppFont.mono(10)).tracking(1.4).foregroundColor(Palette.textFaint)
+                }
+                Text("Scroll \(reread.roman)\(reread.title.isEmpty ? "" : " — \(reread.title)")")
+                    .font(AppFont.display(19)).foregroundColor(Palette.text)
+                    .padding(.top, 2)
+                if !reread.theme.isEmpty {
+                    Text(reread.theme).font(.system(size: 13)).italic().foregroundColor(Palette.textDim)
+                        .padding(.top, 2)
+                }
+                ProgressTrack(pct: min(100, Double(done) / Double(goal) * 100), brassDim: theme.brassDim, glow: theme.glow)
+                    .padding(.top, 12)
+                Text("\(done) of \(goal) days revisited — then the next scroll comes round")
+                    .font(AppFont.mono(11)).foregroundColor(Palette.textFaint)
+                    .padding(.top, 7)
+                Button {
+                    openScroll(reread)
+                } label: {
+                    Label("Read this scroll", systemImage: "book")
+                }
+                .buttonStyle(GhostButtonStyle())
+                .padding(.top, 12)
+            }
         } else {
             CardView {
                 Text("All ten scrolls mastered").font(AppFont.display(19)).foregroundColor(Palette.text)
-                Text("The practice continues — return to any scroll for a daily read.")
-                    .font(.system(size: 13)).italic().foregroundColor(Palette.textDim).padding(.top, 2)
+                Text("The practice isn't a checklist — it works by returning to the ideas. Begin a new cycle to revisit each scroll, one at a time. Your daily reading keeps counting.")
+                    .font(.system(size: 13)).foregroundColor(Palette.textDim).padding(.top, 4)
+                Button {
+                    store.beginCycle()
+                } label: {
+                    Label("Begin a new cycle", systemImage: "arrow.triangle.2.circlepath")
+                }
+                .buttonStyle(PrimaryButtonStyle(brass: theme.brass, glow: theme.glow))
+                .padding(.top, 14)
             }
         }
     }
 
     private var stamps: some View {
         let key = DateKey.today()
-        let entry = store.state.log[key] ?? DayEntry(scrollId: store.state.activeScroll?.id ?? 0)
+        let entry = store.state.log[key] ?? DayEntry(scrollId: store.state.targetScrollId ?? 0)
         return HStack(spacing: 12) {
             StampButton(label: "DAWN", systemImage: "sunrise.fill", done: entry.dawn, brass: theme.brass, glow: theme.glow) {
+                let wasDone = entry.dawn
                 store.toggleSession(\.dawn)
+                if wasDone { promptSkip(key) }
             }
             StampButton(label: "MIDDAY", systemImage: "sun.max.fill", done: entry.midday, brass: theme.brass, glow: theme.glow) {
+                let wasDone = entry.midday
                 store.toggleSession(\.midday)
+                if wasDone { promptSkip(key) }
             }
             StampButton(label: "DUSK", systemImage: "sunset.fill", done: entry.dusk, brass: theme.brass, glow: theme.glow) {
+                let wasDone = entry.dusk
                 store.toggleSession(\.dusk)
+                if wasDone { promptSkip(key) }
             }
         }
         .padding(.vertical, 4)

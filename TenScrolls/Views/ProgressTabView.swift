@@ -3,6 +3,10 @@ import SwiftUI
 struct ProgressTabView: View {
     @EnvironmentObject var store: AppStore
     @State private var confirmReset = false
+    #if canImport(UIKit)
+    @State private var exportURL: URL?
+    @State private var exportError = false
+    #endif
 
     var theme: ThemeOption { Palette.theme(for: store.state.activeThemeId) }
 
@@ -12,6 +16,24 @@ struct ProgressTabView: View {
             let count = store.state.log[key]?.sessionCount ?? 0
             return (key, count)
         }
+    }
+
+    private var recentSkips: [(date: String, reason: String)] {
+        var skips: [(String, String)] = []
+        for (date, entry) in store.state.log {
+            if let reason = entry.skipReason {
+                skips.append((date, reason))
+            }
+        }
+        if let missed = store.state.missedDayReasons {
+            for (date, reason) in missed {
+                // Only add if not already added from log
+                if !skips.contains(where: { $0.0 == date }) {
+                    skips.append((date, reason))
+                }
+            }
+        }
+        return skips.sorted(by: { $0.0 > $1.0 }).prefix(5).map { $0 }
     }
 
     func heatColor(_ count: Int) -> Color {
@@ -38,6 +60,9 @@ struct ProgressTabView: View {
                 badgesCard
                 achievementsCard
                 sealShop
+                #if canImport(UIKit)
+                commonplaceBookCard
+                #endif
 
                 Button {
                     if confirmReset { store.resetAll(); confirmReset = false } else { confirmReset = true }
@@ -53,7 +78,40 @@ struct ProgressTabView: View {
             .padding(.top, 10)
         }
         .background(Palette.background)
+        #if canImport(UIKit)
+        .sheet(item: $exportURL) { url in
+            ShareSheet(items: [url])
+        }
+        .alert("Nothing to export yet", isPresented: $exportError) {
+            Button("OK", role: .cancel) {}
+        } message: {
+            Text("Transcribe some scroll notes or write a journal entry first — that's what fills the book.")
+        }
+        #endif
     }
+
+    #if canImport(UIKit)
+    private var commonplaceBookCard: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            SectionLabel(text: "Commonplace Book")
+            CardView {
+                Text("Export your ten scrolls' notes and every journal entry as a laid-out PDF — a keepsake of the year's practice you can keep, print, or share.")
+                    .font(.system(size: 13)).foregroundColor(Palette.textDim)
+                    .padding(.bottom, 14)
+                Button {
+                    if let url = CommonplaceBook.makePDF(state: store.state, themeColor: theme.brass) {
+                        exportURL = url
+                    } else {
+                        exportError = true
+                    }
+                } label: {
+                    Label("Export as PDF", systemImage: "square.and.arrow.up")
+                }
+                .buttonStyle(PrimaryButtonStyle(brass: theme.brass, glow: theme.glow))
+            }
+        }
+    }
+    #endif
 
     private var overallCard: some View {
         let s = store.state
@@ -65,6 +123,10 @@ struct ProgressTabView: View {
                 .padding(.top, 12)
             Text("\(s.currentStreak) day streak · \(s.shieldsAvailable) shield\(s.shieldsAvailable == 1 ? "" : "s") · \(mastered) of 10 scrolls mastered")
                 .font(AppFont.mono(11)).foregroundColor(Palette.textFaint).padding(.top, 7)
+            if let reread = s.rereadScroll, let cs = s.cycleState {
+                Text("Cycle \(cs.cycle) · revisiting Scroll \(reread.roman)")
+                    .font(AppFont.mono(11)).foregroundColor(theme.brass).padding(.top, 3)
+            }
         }
     }
 
@@ -81,6 +143,20 @@ struct ProgressTabView: View {
                 }
                 Text("Each square is a day · brighter means more sessions read")
                     .font(AppFont.mono(11)).foregroundColor(Palette.textFaint).padding(.top, 8)
+                
+                let skips = recentSkips
+                if !skips.isEmpty {
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text("RECENT MISSES").font(AppFont.mono(10)).tracking(1.4).foregroundColor(Palette.textFaint)
+                        ForEach(skips, id: \.date) { skip in
+                            HStack(alignment: .top, spacing: 6) {
+                                Text(DateKey.short(skip.date)).font(AppFont.mono(10)).foregroundColor(Palette.textFaint).frame(width: 50, alignment: .leading)
+                                Text(skip.reason).font(.system(size: 13)).italic().foregroundColor(Palette.textDim)
+                            }
+                        }
+                    }
+                    .padding(.top, 16)
+                }
             }
         }
     }

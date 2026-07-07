@@ -1,5 +1,6 @@
 import Foundation
 import UserNotifications
+import Combine
 
 /// Owns the app's local-notification scheduling and acts as the notification-center
 /// delegate. It schedules two kinds of notifications per session:
@@ -14,7 +15,7 @@ import UserNotifications
 /// loud, time-sensitive notification; tapping it (or opening the app) presents the
 /// in-app incoming-call screen via the callbacks below.
 @MainActor
-final class NotificationManager: NSObject, ObservableObject, UNUserNotificationCenterDelegate {
+final class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
 
     /// Called when a "call" escalation is tapped, or delivered while the app is
     /// foregrounded. The store turns this into a full-screen incoming-call screen.
@@ -26,6 +27,12 @@ final class NotificationManager: NSObject, ObservableObject, UNUserNotificationC
 
     func registerDelegate() {
         center.delegate = self
+        
+        let acceptAction = UNNotificationAction(identifier: "accept", title: "Accept", options: .foreground)
+        let declineAction = UNNotificationAction(identifier: "decline", title: "Decline", options: .destructive)
+        let callCategory = UNNotificationCategory(identifier: "call", actions: [acceptAction, declineAction], intentIdentifiers: [], options: [])
+        
+        center.setNotificationCategories([callCategory])
     }
 
     // MARK: - Authorization
@@ -75,6 +82,7 @@ final class NotificationManager: NSObject, ObservableObject, UNUserNotificationC
             call.sound = .defaultCritical // full-volume if the Critical Alerts entitlement is present; otherwise degrades to default
             call.userInfo = ["session": session.rawValue, "type": "call"]
             call.interruptionLevel = .timeSensitive
+            call.categoryIdentifier = "call"
             let callComps = Calendar.current.dateComponents(
                 [.year, .month, .day, .hour, .minute, .second], from: fireDate)
             let callTrigger = UNCalendarNotificationTrigger(dateMatching: callComps, repeats: false)
@@ -93,6 +101,20 @@ final class NotificationManager: NSObject, ObservableObject, UNUserNotificationC
         center.add(UNNotificationRequest(identifier: "test-notification", content: content, trigger: trigger))
     }
 
+    /// Fires a call-type notification in 5 seconds so the user can verify the full
+    /// incoming-call flow without waiting for a real session timeout.
+    func sendTestCall() {
+        let content = UNMutableNotificationContent()
+        content.title = "Dawn Reading — incoming call"
+        content.body = "Test: tap to see the incoming call screen."
+        content.sound = .defaultCritical
+        content.userInfo = ["session": Session.dawn.rawValue, "type": "call"]
+        content.interruptionLevel = .timeSensitive
+        content.categoryIdentifier = "call"
+        let trigger = UNTimeIntervalNotificationTrigger(timeInterval: 5, repeats: false)
+        center.add(UNNotificationRequest(identifier: "test-call", content: content, trigger: trigger))
+    }
+
     // MARK: - UNUserNotificationCenterDelegate
 
     func userNotificationCenter(
@@ -103,7 +125,9 @@ final class NotificationManager: NSObject, ObservableObject, UNUserNotificationC
         // A call arriving while the app is open should present the call screen directly,
         // not a banner. Reminders show a normal banner.
         if (info["type"] as? String) == "call" {
-            handle(info)
+            if let raw = info["session"] as? String, let session = Session(rawValue: raw) {
+                onIncomingCall?(session)
+            }
             return []
         }
         return [.banner, .sound]
@@ -113,12 +137,16 @@ final class NotificationManager: NSObject, ObservableObject, UNUserNotificationC
         _ center: UNUserNotificationCenter,
         didReceive response: UNNotificationResponse
     ) async {
-        handle(response.notification.request.content.userInfo)
-    }
+        let info = response.notification.request.content.userInfo
+        guard let raw = info["session"] as? String, let session = Session(rawValue: raw) else { return }
 
-    private func handle(_ userInfo: [AnyHashable: Any]) {
-        guard let raw = userInfo["session"] as? String, let session = Session(rawValue: raw) else { return }
-        if (userInfo["type"] as? String) == "call" {
+        // If the user tapped the "Decline" button on the lock screen, do nothing.
+        // iOS will dismiss the notification automatically and the app stays in the background.
+        if response.actionIdentifier == "decline" {
+            return
+        }
+        
+        if (info["type"] as? String) == "call" {
             onIncomingCall?(session)
         } else {
             onReminderTap?(session)

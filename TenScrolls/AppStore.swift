@@ -1,5 +1,6 @@
 import Foundation
 import Combine
+import WidgetKit
 
 @MainActor
 final class AppStore: ObservableObject {
@@ -20,16 +21,19 @@ final class AppStore: ObservableObject {
     let notifier = NotificationManager()
 
     init() {
+        let loadedState: AppState
         if let data = UserDefaults.standard.data(forKey: defaultsKey),
            let decoded = try? JSONDecoder().decode(AppState.self, from: data) {
-            self.state = decoded
+            loadedState = decoded
         } else {
-            self.state = AppState.defaultState()
+            loadedState = AppState.defaultState()
         }
-        let info = state.levelInfo()
+        self.state = loadedState
+
+        let info = loadedState.levelInfo()
         self.prevLevel = info.level
-        self.prevMasteredIds = state.scrolls.filter { $0.status == .mastered }.map { $0.id }
-        self.prevEarnedIds = state.achievements.filter { $0.earned }.map { $0.def.id }
+        self.prevMasteredIds = loadedState.scrolls.filter { $0.status == .mastered }.map { $0.id }
+        self.prevEarnedIds = loadedState.achievements.filter { $0.earned }.map { $0.def.id }
         publishSnapshotIfNeeded()
 
         notifier.registerDelegate()
@@ -85,8 +89,33 @@ final class AppStore: ObservableObject {
     }
 
     private func persist() {
-        if let data = try? JSONEncoder().encode(state) {
-            UserDefaults.standard.set(data, forKey: defaultsKey)
+        let stateData = try? JSONEncoder().encode(state)
+        
+        let todayKey = DateKey.today()
+        let todayLog = state.log[todayKey]
+        let activeScroll = state.activeScroll
+        let daysCompleted = activeScroll.map { state.scrollDaysCompleted($0.id) } ?? 0
+        let themeId = state.activeThemeId
+        let streak = state.currentStreak
+        
+        let wData = WidgetData(
+            streak: streak,
+            activeScrollRoman: activeScroll?.roman ?? "X",
+            activeScrollTitle: activeScroll?.title ?? "",
+            daysCompletedOnActive: daysCompleted,
+            dawnComplete: todayLog?.dawn ?? false,
+            middayComplete: todayLog?.midday ?? false,
+            duskComplete: todayLog?.dusk ?? false,
+            themeId: themeId,
+            lastUpdated: Date()
+        )
+        WidgetData.save(wData)
+        
+        DispatchQueue.global(qos: .background).async {
+            if let data = stateData {
+                UserDefaults.standard.set(data, forKey: self.defaultsKey)
+            }
+            WidgetCenter.shared.reloadAllTimelines()
         }
     }
 
@@ -146,14 +175,17 @@ final class AppStore: ObservableObject {
     // MARK: - Mutations
 
     func toggleSession(_ session: WritableKeyPath<DayEntry, Bool>) {
-        guard let active = state.activeScroll else { return }
+        // Log against the active scroll on the first pass, or the reread scroll in cycle mode.
+        guard let targetId = state.targetScrollId else { return }
         let key = DateKey.today()
-        var entry = state.log[key] ?? DayEntry(scrollId: active.id)
-        entry.scrollId = active.id
+        let wasComplete = state.log[key]?.allComplete ?? false
+        var entry = state.log[key] ?? DayEntry(scrollId: targetId)
+        entry.scrollId = targetId
         entry[keyPath: session].toggle()
         state.log[key] = entry
 
-        if entry.allComplete {
+        // Mastery only applies while an unmastered scroll is active (the first pass).
+        if entry.allComplete, let active = state.activeScroll, active.id == targetId {
             let days = state.log.values.filter { $0.scrollId == active.id && $0.allComplete }.count
             if days >= 30 {
                 if let idx = state.scrolls.firstIndex(where: { $0.id == active.id }) {
@@ -162,6 +194,16 @@ final class AppStore: ObservableObject {
                 if let nextIdx = state.scrolls.firstIndex(where: { $0.status == .locked }) {
                     state.scrolls[nextIdx].status = .active
                 }
+            }
+        }
+
+        // Cycle mode: a newly-completed day advances the reread rotation; un-stamping
+        // the same day before it rotates walks it back.
+        if state.isCycleActive {
+            if entry.allComplete, !wasComplete {
+                advanceCycle(completedKey: key)
+            } else if wasComplete, !entry.allComplete {
+                state.cycleState?.daysThisScroll.removeAll { $0 == key }
             }
         }
 
@@ -178,6 +220,72 @@ final class AppStore: ObservableObject {
         state.bestStreak = max(state.bestStreak, state.currentStreak)
         afterMutation()
         syncNotifications() // completing a session cancels its pending escalation call
+    }
+
+    /// Begins the rereading loop once every scroll is mastered.
+    func beginCycle() {
+        guard state.allScrollsMastered, state.cycleState == nil else { return }
+        let firstId = state.scrolls.map(\.id).min() ?? 1
+        state.cycleState = CycleState(cycle: 2, currentScrollId: firstId, daysThisScroll: [])
+        afterMutation()
+        showToast("A new cycle begins — revisit Scroll \(state.rereadScroll?.roman ?? "I")")
+        syncNotifications()
+    }
+
+    /// Records a completed reread day and rotates to the next scroll once the goal is met.
+    private func advanceCycle(completedKey: String) {
+        guard var cs = state.cycleState, !cs.daysThisScroll.contains(completedKey) else { return }
+        cs.daysThisScroll.append(completedKey)
+        if cs.daysThisScroll.count >= Constants.cycleGoalDays {
+            cs.daysThisScroll = []
+            let ids = state.scrolls.map(\.id).sorted()
+            if let idx = ids.firstIndex(of: cs.currentScrollId), idx + 1 < ids.count {
+                cs.currentScrollId = ids[idx + 1]
+            } else {
+                cs.currentScrollId = ids.first ?? 1
+                cs.cycle += 1
+            }
+        }
+        state.cycleState = cs
+    }
+
+    func recordSkipReason(_ reason: String, for date: String) {
+        if var entry = state.log[date] {
+            entry.skipReason = reason
+            state.log[date] = entry
+        } else {
+            if state.missedDayReasons == nil {
+                state.missedDayReasons = [:]
+            }
+            state.missedDayReasons?[date] = reason
+        }
+        afterMutation()
+    }
+
+    func shouldShowWeeklyRecap() -> Bool {
+        let today = DateKey.today()
+        if state.lastWeeklyRecapDate == today { return false }
+        
+        let calendar = Calendar.current
+        let weekday = calendar.component(.weekday, from: Date())
+        // Sunday (1) or Monday (2)
+        guard weekday == 1 || weekday == 2 else { return false }
+        
+        if let last = state.lastWeeklyRecapDate {
+            let lastDate = DateKey.date(from: last)
+            let daysSince = calendar.dateComponents([.day], from: lastDate, to: Date()).day ?? 0
+            if daysSince < 6 { return false }
+        }
+        
+        // Ensure they have actually been using the app for at least a few days
+        guard state.totalDaysCompleted >= 3 else { return false }
+        
+        return true
+    }
+
+    func recordWeeklyRecapShown() {
+        state.lastWeeklyRecapDate = DateKey.today()
+        afterMutation()
     }
 
     func toggleHabit(_ habitId: String) {
