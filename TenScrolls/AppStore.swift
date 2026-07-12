@@ -60,7 +60,8 @@ final class AppStore: ObservableObject {
     /// idempotent; call it after session changes, pref changes, and on foreground.
     func syncNotifications() {
         if #available(iOS 26, *) {
-            Task { await AlarmScheduler.shared.reschedule(from: state.notifPrefs) }
+            let done = doneSessionsToday
+            Task { await AlarmScheduler.shared.reschedule(from: state.notifPrefs, doneSessions: done) }
         } else {
             notifier.reschedule(prefs: state.notifPrefs, doneSessions: doneSessionsToday)
         }

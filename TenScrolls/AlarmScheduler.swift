@@ -124,8 +124,13 @@ final class AlarmScheduler: ObservableObject {
     // MARK: Full reschedule from prefs
 
     /// Call this any time `NotificationPrefs` changes (master toggle, a time
-    /// picker, or the escalation-call toggle/timeout).
-    func reschedule(from prefs: NotificationPrefs) async {
+    /// picker, or the escalation-call toggle/timeout), and any time today's
+    /// session completions change.
+    ///
+    /// `doneSessions` are the sessions already completed today — their escalation
+    /// "call" alarms are skipped, mirroring `NotificationManager.reschedule(prefs:doneSessions:)`.
+    /// Without this, a completed session would still ring its "missed" call later.
+    func reschedule(from prefs: NotificationPrefs, doneSessions: Set<Session> = []) async {
         await cancelAll()
 
         guard prefs.enabled else { return }
@@ -137,7 +142,7 @@ final class AlarmScheduler: ObservableObject {
                 let alarmID = try await scheduleSession(session, hhmm: hhmm)
                 defaults.set(alarmID.uuidString, forKey: idKey(session))
 
-                if prefs.callEnabled {
+                if prefs.callEnabled, !doneSessions.contains(session) {
                     let callID = try await scheduleEscalationCall(
                         for: session,
                         hhmm: hhmm,

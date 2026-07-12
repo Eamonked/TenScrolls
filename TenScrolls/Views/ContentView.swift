@@ -92,15 +92,6 @@ struct ContentView: View {
         .sheet(item: $activeSheet) { sheet in
             sheetContent(for: sheet)
         }
-        #if os(macOS)
-        .sheet(item: $activeCall) { call in
-            IncomingCallView(
-                session: call.session,
-                onAccept: { store.answerCall() },
-                onDecline: { store.declineCall() }
-            )
-        }
-        #else
         .fullScreenCover(item: $activeCall) { call in
             IncomingCallView(
                 session: call.session,
@@ -108,7 +99,6 @@ struct ContentView: View {
                 onDecline: { store.declineCall() }
             )
         }
-        #endif
         .onChange(of: store.incomingCall) { _, newCall in
             if let call = newCall {
                 if activeSheet != nil {
@@ -125,11 +115,7 @@ struct ContentView: View {
                 activeCall = nil
             }
         }
-        #if os(macOS)
-        .sheet(isPresented: $showWeeklyRecap) { WeeklyRecapView() }
-        #else
         .fullScreenCover(isPresented: $showWeeklyRecap) { WeeklyRecapView() }
-        #endif
         .onAppear {
             store.checkPendingAlarmSession()
             runStartOfDayChecks()
