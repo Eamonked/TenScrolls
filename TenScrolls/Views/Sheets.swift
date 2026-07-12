@@ -25,6 +25,13 @@ struct ScrollEditorSheet: View {
     // Highlight-to-journal state: set when the reader picks "Add to Journal"
     // from a text selection; presenting a sheet for it is driven off this.
     @State private var pendingExcerpt: String?
+
+    // `scroll` is a snapshot taken when the sheet was presented, so writing
+    // a bookmark to the store doesn't change what this view sees. Track the
+    // tap locally too, purely so the "you stopped here" feedback shows up
+    // the instant it happens rather than the next time the scroll is opened.
+    @State private var justBookmarkedIndex: Int?
+    private let bookmarkHaptic = UIImpactFeedbackGenerator(style: .light)
     
     private let timer = Timer.publish(every: 1, on: .main, in: .common).autoconnect()
     
@@ -295,13 +302,14 @@ struct ScrollEditorSheet: View {
 
     @ViewBuilder
     private func paragraphBlock(_ paragraph: String, index: Int) -> some View {
-        let isBookmarked = scroll.bookmarkParagraphIndex == index
+        let isBookmarked = scroll.bookmarkParagraphIndex == index || justBookmarkedIndex == index
         VStack(alignment: .leading, spacing: 8) {
             if isBookmarked {
                 Label("You stopped here", systemImage: "bookmark.fill")
                     .font(AppFont.mono(10))
                     .tracking(0.6)
                     .foregroundColor(themeOption.brass)
+                    .transition(.opacity.combined(with: .move(edge: .top)))
             }
             SelectableParagraphView(
                 text: paragraph,
@@ -312,6 +320,10 @@ struct ScrollEditorSheet: View {
                     pendingExcerpt = excerpt
                 },
                 onTapped: {
+                    bookmarkHaptic.impactOccurred()
+                    withAnimation(.easeOut(duration: 0.2)) {
+                        justBookmarkedIndex = index
+                    }
                     store.setBookmark(scrollId: scroll.id, paragraphIndex: index)
                 }
             )
@@ -320,6 +332,7 @@ struct ScrollEditorSheet: View {
         .padding(.horizontal, isBookmarked ? 10 : 0)
         .background(isBookmarked ? themeOption.brass.opacity(0.07) : Color.clear)
         .cornerRadius(8)
+        .animation(.easeOut(duration: 0.2), value: isBookmarked)
     }
 
     // MARK: - Editing View
