@@ -18,6 +18,7 @@ struct AppState: Codable, Equatable {
     /// Reasons for missed days, keyed by date string ("yyyy-MM-dd").
     /// Stored separately from the log so days with zero sessions still get a reason.
     var missedDayReasons: [String: String]? = nil
+    var purchasedShields: Int? = 0
     var lastWeeklyRecapDate: String? = nil
     /// Non-nil once the reader has begun rereading after mastering all ten scrolls.
     var cycleState: CycleState? = nil
@@ -102,6 +103,22 @@ extension AppState {
         scrolls.reduce(0) { $0 + scrollDaysCompleted($1.id) }
     }
 
+    func skipReasons() -> [(date: String, reason: String)] {
+        var byDate: [String: String] = [:]
+        for (date, entry) in log {
+            if let reason = entry.skipReason {
+                byDate[date] = reason
+            }
+        }
+        if let missed = missedDayReasons {
+            for (date, reason) in missed where byDate[date] == nil {
+                byDate[date] = reason
+            }
+        }
+        return byDate.map { (date: $0.key, reason: $0.value) }
+            .sorted { $0.date > $1.date }
+    }
+
     func isDayComplete(_ key: String) -> Bool {
         if let e = log[key], e.allComplete { return true }
         return shieldUsedDates.contains(key)
@@ -182,15 +199,16 @@ extension AppState {
     }
 
     var sealsSpent: Int {
-        unlockedThemeIds.filter { $0 != "brass" }.reduce(0) { sum, id in
+        let themeCosts = unlockedThemeIds.filter { $0 != "brass" }.reduce(0) { sum, id in
             sum + (Palette.themes.first(where: { $0.id == id })?.cost ?? 0)
         }
+        return themeCosts + (purchasedShields ?? 0) * 30
     }
 
     var sealsAvailable: Int { sealsEarned - sealsSpent }
 
     var shieldsAvailable: Int {
-        max(0, totalDaysCompleted / 7 - shieldUsedDates.count)
+        max(0, totalDaysCompleted / 7 - shieldUsedDates.count + (purchasedShields ?? 0))
     }
 
     var achievements: [(def: AchievementDef, earned: Bool)] {

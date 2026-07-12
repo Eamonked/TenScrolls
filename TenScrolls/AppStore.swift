@@ -1,6 +1,7 @@
 import Foundation
 import Combine
 import WidgetKit
+import AlarmKit
 
 @MainActor
 final class AppStore: ObservableObject {
@@ -58,7 +59,11 @@ final class AppStore: ObservableObject {
     /// Rebuild scheduled notifications from current prefs + today's progress. Cheap and
     /// idempotent; call it after session changes, pref changes, and on foreground.
     func syncNotifications() {
-        notifier.reschedule(prefs: state.notifPrefs, doneSessions: doneSessionsToday)
+        if #available(iOS 26, *) {
+            Task { await AlarmScheduler.shared.reschedule(from: state.notifPrefs) }
+        } else {
+            notifier.reschedule(prefs: state.notifPrefs, doneSessions: doneSessionsToday)
+        }
     }
 
     func updateNotifPrefs(_ prefs: NotificationPrefs) {
@@ -70,12 +75,29 @@ final class AppStore: ObservableObject {
     /// Toggles reminders, requesting system permission first when turning them on.
     func setNotificationsEnabled(_ enabled: Bool) async {
         if enabled {
-            let granted = await notifier.requestAuthorization()
-            guard granted else { return }
+            if #available(iOS 26, *) {
+                let granted = await AlarmScheduler.shared.requestAuthorizationIfNeeded()
+                guard granted else { return }
+            } else {
+                let granted = await notifier.requestAuthorization()
+                guard granted else { return }
+            }
         }
         var prefs = state.notifPrefs
         prefs.enabled = enabled
         updateNotifPrefs(prefs)
+    }
+
+    /// Check if the app was launched from an AlarmKit "Open the app" intent.
+    /// If so, route to the Today tab and clear the pending key.
+    func checkPendingAlarmSession() {
+        if #available(iOS 26, *) {
+            let key = AlarmScheduler.pendingSessionDefaultsKey
+            if let _ = UserDefaults.standard.string(forKey: key) {
+                selectedTab = 0
+                UserDefaults.standard.removeObject(forKey: key)
+            }
+        }
     }
 
     /// Accept the incoming call: dismiss it and land on the Today tab.
@@ -175,13 +197,46 @@ final class AppStore: ObservableObject {
     // MARK: - Mutations
 
     func toggleSession(_ session: WritableKeyPath<DayEntry, Bool>) {
+        // Determine which session this is
+        let sessionType: Session = {
+            switch session {
+            case \DayEntry.dawn: return .dawn
+            case \DayEntry.midday: return .midday
+            case \DayEntry.dusk: return .dusk
+            default: return .dawn // fallback, should never happen
+            }
+        }()
+        
+        // Validate time window eligibility
+        let currentTime = Date()
+        if !sessionType.isEligible(at: currentTime) {
+            let status = sessionType.windowStatus(at: currentTime)
+            switch status {
+            case .upcoming:
+                showToast("\(sessionType.label) opens at \(sessionType.timeWindow.displayRange)")
+            case .closed:
+                showToast("\(sessionType.label) window has closed for today")
+            case .open:
+                break // Should not reach here
+            }
+            return
+        }
+        
         // Log against the active scroll on the first pass, or the reread scroll in cycle mode.
         guard let targetId = state.targetScrollId else { return }
         let key = DateKey.today()
         let wasComplete = state.log[key]?.allComplete ?? false
         var entry = state.log[key] ?? DayEntry(scrollId: targetId)
         entry.scrollId = targetId
-        entry[keyPath: session].toggle()
+        
+        // Toggle with timestamp tracking
+        let wasSet = entry[keyPath: session]
+        if wasSet {
+            entry.clearCompleted(sessionType)
+        } else {
+            entry.setCompleted(sessionType, at: currentTime)
+        }
+        
         state.log[key] = entry
 
         // Mastery only applies while an unmastered scroll is active (the first pass).
@@ -346,6 +401,13 @@ final class AppStore: ObservableObject {
     func equipTheme(_ id: String) {
         state.activeThemeId = id
         afterMutation()
+    }
+
+    func buyShield(cost: Int) -> Bool {
+        guard state.sealsAvailable >= cost else { return false }
+        state.purchasedShields = (state.purchasedShields ?? 0) + 1
+        afterMutation()
+        return true
     }
 
     func setTraderName(_ name: String) {

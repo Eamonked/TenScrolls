@@ -1,20 +1,48 @@
 import SwiftUI
 import UserNotifications
+import AlarmKit
+import Combine
 
 struct ScrollEditorSheet: View {
     @EnvironmentObject var store: AppStore
     @Environment(\.dismiss) private var dismiss
     let scroll: Scroll
     var onSave: (Scroll) -> Void
+    var onReadingComplete: (() -> Void)? = nil  // Callback when friction gate is passed
 
     @State private var title: String
     @State private var theme: String
     @State private var notes: String
     @State private var editing = false
+    
+    // Intentional friction gate state
+    @State private var scrollProgress: CGFloat = 0
+    @State private var hasScrolledToBottom = false
+    @State private var readingStartTime: Date?
+    @State private var currentTime = Date()  // For timer updates
+    
+    private let timer = Timer.publish(every: 1, on: .main, in: .common).autoconnect()
+    
+    private var minimumReadingTimeSeconds: TimeInterval { 30 } // Minimum 30 seconds
+    private var hasMetTimeRequirement: Bool {
+        guard let startTime = readingStartTime else { return false }
+        return currentTime.timeIntervalSince(startTime) >= minimumReadingTimeSeconds
+    }
+    private var canComplete: Bool {
+        let result = editing || hasScrolledToBottom && hasMetTimeRequirement
+        // Notify when reading is complete (for session validation)
+        if result && !editing && onReadingComplete != nil {
+            Task { @MainActor in
+                onReadingComplete?()
+            }
+        }
+        return result
+    }
 
-    init(scroll: Scroll, onSave: @escaping (Scroll) -> Void) {
+    init(scroll: Scroll, onSave: @escaping (Scroll) -> Void, onReadingComplete: (() -> Void)? = nil) {
         self.scroll = scroll
         self.onSave = onSave
+        self.onReadingComplete = onReadingComplete
         _title = State(initialValue: scroll.title)
         _theme = State(initialValue: scroll.theme)
         _notes = State(initialValue: scroll.notes)
@@ -41,12 +69,21 @@ struct ScrollEditorSheet: View {
                     Button {
                         if editing {
                             editing = false
-                        } else {
+                        } else if canComplete {
                             dismiss()
                         }
                     } label: {
-                        Image(systemName: editing ? "chevron.left" : "xmark")
+                        HStack(spacing: 4) {
+                            Image(systemName: editing ? "chevron.left" : "xmark")
+                            if !editing && !canComplete && hasContent {
+                                Image(systemName: "lock.fill")
+                                    .font(.system(size: 10))
+                                    .foregroundColor(Palette.textFaint)
+                            }
+                        }
                     }
+                    .disabled(!editing && !canComplete && hasContent)
+                    .opacity((editing || canComplete || !hasContent) ? 1.0 : 0.5)
                 }
                 ToolbarItem(placement: .confirmationAction) {
                     if editing {
@@ -74,105 +111,148 @@ struct ScrollEditorSheet: View {
             // If the scroll has no content yet, start in edit mode
             if !hasContent { editing = true }
         }
+        .onReceive(timer) { time in
+            currentTime = time
+        }
+        .interactiveDismissDisabled(!canComplete && hasContent && !editing)
     }
-
     // MARK: - Reading View
 
     private var readingView: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            // Header ornament
-            HStack {
-                Spacer()
-                VStack(spacing: 6) {
-                    Text("⟐")
-                        .font(.system(size: 22))
-                        .foregroundColor(themeOption.brass.opacity(0.5))
-                    Text("SCROLL \(scroll.roman)")
-                        .font(AppFont.mono(11))
-                        .tracking(2.4)
-                        .foregroundColor(themeOption.brass.opacity(0.7))
-                }
-                Spacer()
-            }
-            .padding(.top, 24)
-            .padding(.bottom, 20)
-
-            // Status pill
-            HStack {
-                Spacer()
-                statusPill
-                Spacer()
-            }
-            .padding(.bottom, 28)
-
-            // Title
-            if !title.isEmpty {
-                Text(title)
-                    .font(AppFont.display(26, weight: .bold))
-                    .foregroundColor(Palette.text)
-                    .multilineTextAlignment(.leading)
-                    .padding(.bottom, 4)
-            }
-
-            // Theme line
-            if !theme.isEmpty {
-                Text(theme)
-                    .font(.system(size: 15, weight: .medium, design: .serif))
-                    .italic()
-                    .foregroundColor(themeOption.brass)
+        ScrollViewReader { proxy in
+            ScrollView {
+                VStack(alignment: .leading, spacing: 0) {
+                    // Header ornament
+                    HStack {
+                        Spacer()
+                        VStack(spacing: 6) {
+                            Text("⟐")
+                                .font(.system(size: 22))
+                                .foregroundColor(themeOption.brass.opacity(0.5))
+                            Text("SCROLL \(scroll.roman)")
+                                .font(AppFont.mono(11))
+                                .tracking(2.4)
+                                .foregroundColor(themeOption.brass.opacity(0.7))
+                        }
+                        Spacer()
+                    }
+                    .padding(.top, 24)
                     .padding(.bottom, 20)
-            }
+                    .id("top")
 
-            // Decorative divider
-            if !title.isEmpty || !theme.isEmpty {
-                HStack(spacing: 10) {
-                    Rectangle().fill(themeOption.brass.opacity(0.2)).frame(height: 1)
-                    Circle().fill(themeOption.brass.opacity(0.35)).frame(width: 5, height: 5)
-                    Rectangle().fill(themeOption.brass.opacity(0.2)).frame(height: 1)
+                    // Status pill
+                    HStack {
+                        Spacer()
+                        statusPill
+                        Spacer()
+                    }
+                    .padding(.bottom, 28)
+
+                    // Title
+                    if !title.isEmpty {
+                        Text(title)
+                            .font(AppFont.display(26, weight: .bold))
+                            .foregroundColor(Palette.text)
+                            .multilineTextAlignment(.leading)
+                            .padding(.bottom, 4)
+                    }
+
+                    // Theme line
+                    if !theme.isEmpty {
+                        Text(theme)
+                            .font(.system(size: 15, weight: .medium, design: .serif))
+                            .italic()
+                            .foregroundColor(themeOption.brass)
+                            .padding(.bottom, 20)
+                    }
+
+                    // Decorative divider
+                    if !title.isEmpty || !theme.isEmpty {
+                        HStack(spacing: 10) {
+                            Rectangle().fill(themeOption.brass.opacity(0.2)).frame(height: 1)
+                            Circle().fill(themeOption.brass.opacity(0.35)).frame(width: 5, height: 5)
+                            Rectangle().fill(themeOption.brass.opacity(0.2)).frame(height: 1)
+                        }
+                        .padding(.bottom, 24)
+                    }
+
+                    // Notes body
+                    if !notes.isEmpty {
+                        Text(notes)
+                            .font(.system(size: 16, weight: .regular, design: .serif))
+                            .foregroundColor(Palette.text.opacity(0.92))
+                            .lineSpacing(7)
+                            .multilineTextAlignment(.leading)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+
+                    // Empty state
+                    if !hasContent {
+                        VStack(spacing: 14) {
+                            Image(systemName: "square.and.pencil")
+                                .font(.system(size: 32))
+                                .foregroundColor(Palette.textFaint)
+                            Text("No notes yet")
+                                .font(AppFont.display(18))
+                                .foregroundColor(Palette.textDim)
+                            Text("Tap the pencil icon above to transcribe\nyour title and notes from the book.")
+                                .font(.system(size: 13))
+                                .foregroundColor(Palette.textFaint)
+                                .multilineTextAlignment(.center)
+                        }
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 48)
+                    }
+
+                    // Bottom ornament and friction gate indicator
+                    VStack(spacing: 16) {
+                        HStack {
+                            Spacer()
+                            Text("⟐")
+                                .font(.system(size: 18))
+                                .foregroundColor(themeOption.brass.opacity(0.25))
+                            Spacer()
+                        }
+                        
+                        // Reading progress indicator
+                        if hasContent && !canComplete {
+                            VStack(spacing: 8) {
+                                if !hasScrolledToBottom {
+                                    Label("Scroll to the end to complete", systemImage: "arrow.down")
+                                        .font(.system(size: 13))
+                                        .foregroundColor(Palette.textFaint)
+                                } else if !hasMetTimeRequirement {
+                                    let remaining = Int(minimumReadingTimeSeconds - currentTime.timeIntervalSince(readingStartTime ?? Date()))
+                                    Label("Take your time (\(max(0, remaining))s)", systemImage: "clock")
+                                        .font(.system(size: 13))
+                                        .foregroundColor(Palette.textFaint)
+                                }
+                            }
+                            .padding(.vertical, 12)
+                        }
+                    }
+                    .padding(.top, 36)
+                    .padding(.bottom, 20)
+                    .id("bottom")
+                    
+                    // Invisible marker for scroll detection
+                    Color.clear
+                        .frame(height: 1)
+                        .onAppear {
+                            // When this appears, user has scrolled to bottom
+                            if hasContent && !hasScrolledToBottom {
+                                hasScrolledToBottom = true
+                            }
+                        }
                 }
-                .padding(.bottom, 24)
+                .padding(.horizontal, 28)
             }
-
-            // Notes body
-            if !notes.isEmpty {
-                Text(notes)
-                    .font(.system(size: 16, weight: .regular, design: .serif))
-                    .foregroundColor(Palette.text.opacity(0.92))
-                    .lineSpacing(7)
-                    .multilineTextAlignment(.leading)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-
-            // Empty state
-            if !hasContent {
-                VStack(spacing: 14) {
-                    Image(systemName: "square.and.pencil")
-                        .font(.system(size: 32))
-                        .foregroundColor(Palette.textFaint)
-                    Text("No notes yet")
-                        .font(AppFont.display(18))
-                        .foregroundColor(Palette.textDim)
-                    Text("Tap the pencil icon above to transcribe\nyour title and notes from the book.")
-                        .font(.system(size: 13))
-                        .foregroundColor(Palette.textFaint)
-                        .multilineTextAlignment(.center)
+            .onAppear {
+                if hasContent && readingStartTime == nil {
+                    readingStartTime = Date()
                 }
-                .frame(maxWidth: .infinity)
-                .padding(.vertical, 48)
             }
-
-            // Bottom ornament
-            HStack {
-                Spacer()
-                Text("⟐")
-                    .font(.system(size: 18))
-                    .foregroundColor(themeOption.brass.opacity(0.25))
-                Spacer()
-            }
-            .padding(.top, 36)
-            .padding(.bottom, 20)
         }
-        .padding(.horizontal, 28)
     }
 
     // MARK: - Editing View
@@ -280,6 +360,10 @@ struct NotificationSettingsModal: View {
     @Environment(\.dismiss) private var dismiss
 
     @State private var status: UNAuthorizationStatus = .notDetermined
+    /// Tracks AlarmKit denied state on iOS 26+ (AlarmKit auth is checked via
+    /// AlarmScheduler.shared.authorizationState, but we mirror it here for the
+    /// denied-warning banner which needs a simple bool).
+    @State private var alarmAuthDenied: Bool = false
 
     var themeOption: ThemeOption { Palette.theme(for: store.state.activeThemeId) }
     private var prefs: NotificationPrefs { store.state.notifPrefs }
@@ -307,7 +391,7 @@ struct NotificationSettingsModal: View {
                             .labelsHidden()
                             .tint(themeOption.brass)
                         }
-                        if status == .denied {
+                        if isAuthorizationDenied {
                             Divider().background(Palette.ink3).padding(.vertical, 10)
                             Label("Notifications are turned off in iOS Settings. Enable them for Ten Scrolls to receive reminders.",
                                   systemImage: "exclamationmark.triangle")
@@ -357,17 +441,25 @@ struct NotificationSettingsModal: View {
                     .disabled(!prefs.enabled)
                     .opacity(prefs.enabled ? 1 : 0.5)
 
-                    if prefs.enabled && status == .authorized {
+                    if prefs.enabled && isAuthorized {
                         Button {
-                            store.notifier.sendTest()
+                            if #available(iOS 26, *) {
+                                AlarmScheduler.shared.sendTest()
+                            } else {
+                                store.notifier.sendTest()
+                            }
                         } label: {
-                            Label("Send test notification", systemImage: "paperplane")
+                            Label("Send test alarm", systemImage: "paperplane")
                         }
                         .buttonStyle(GhostButtonStyle())
 
                         if prefs.callEnabled {
                             Button {
-                                store.notifier.sendTestCall()
+                                if #available(iOS 26, *) {
+                                    AlarmScheduler.shared.sendTestCall()
+                                } else {
+                                    store.notifier.sendTestCall()
+                                }
                             } label: {
                                 Label("Test escalation call", systemImage: "phone.arrow.up.right")
                             }
@@ -393,7 +485,32 @@ struct NotificationSettingsModal: View {
             }
         }
         .presentationDetents([.large])
-        .task { status = await store.notifier.authorizationStatus() }
+        .task {
+            if #available(iOS 26, *) {
+                await AlarmScheduler.shared.refreshAuthorizationState()
+                alarmAuthDenied = AlarmScheduler.shared.authorizationState == .denied
+            } else {
+                status = await store.notifier.authorizationStatus()
+            }
+        }
+    }
+
+    /// Whether authorization is granted (works across both paths).
+    private var isAuthorized: Bool {
+        if #available(iOS 26, *) {
+            return !alarmAuthDenied && AlarmScheduler.shared.authorizationState == .authorized
+        } else {
+            return status == .authorized
+        }
+    }
+
+    /// Whether authorization has been explicitly denied.
+    private var isAuthorizationDenied: Bool {
+        if #available(iOS 26, *) {
+            return alarmAuthDenied
+        } else {
+            return status == .denied
+        }
     }
 
     private func timeRow(session: Session, keyPath: WritableKeyPath<NotificationPrefs, String>) -> some View {

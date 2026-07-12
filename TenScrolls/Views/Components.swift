@@ -56,29 +56,80 @@ struct StampButton: View {
     let done: Bool
     var brass: Color
     var glow: Color
+    var windowStatus: SessionWindowStatus = .open
     let action: () -> Void
+
+    private var isDisabled: Bool {
+        !done && windowStatus != .open
+    }
+    
+    private var statusColor: Color {
+        if done { return brass }
+        switch windowStatus {
+        case .open: return Palette.textDim
+        case .upcoming: return Palette.textFaint.opacity(0.5)
+        case .closed: return Color.red.opacity(0.6)
+        }
+    }
+    
+    private var statusText: String? {
+        guard !done else { return nil }
+        switch windowStatus {
+        case .open: return nil
+        case .upcoming: return "Soon"
+        case .closed: return "Missed"
+        }
+    }
 
     var body: some View {
         VStack(spacing: 8) {
             Button(action: action) {
-                Circle()
-                    .fill(done
-                        ? AnyShapeStyle(RadialGradient(colors: [glow, brass], center: .init(x: 0.35, y: 0.3), startRadius: 2, endRadius: 34))
-                        : AnyShapeStyle(Palette.ink2))
-                    .overlay(Circle().stroke(done ? brass : Palette.inkLine, lineWidth: done ? 2 : 2))
-                    .frame(width: 64, height: 64)
-                    .overlay(
-                        Image(systemName: systemImage)
-                            .font(.system(size: 22))
-                            .foregroundColor(done ? Color(hex: "1A1207") : Palette.textDim)
-                    )
-                    .shadow(color: done ? brass.opacity(0.35) : .clear, radius: 10)
+                ZStack {
+                    Circle()
+                        .fill(done
+                            ? AnyShapeStyle(RadialGradient(colors: [glow, brass], center: .init(x: 0.35, y: 0.3), startRadius: 2, endRadius: 34))
+                            : AnyShapeStyle(Palette.ink2))
+                        .overlay(Circle().stroke(done ? brass : (isDisabled ? Palette.inkLine.opacity(0.4) : Palette.inkLine), lineWidth: done ? 2 : 2))
+                        .frame(width: 64, height: 64)
+                        .overlay(
+                            Image(systemName: systemImage)
+                                .font(.system(size: 22))
+                                .foregroundColor(done ? Color(hex: "1A1207") : statusColor)
+                        )
+                        .shadow(color: done ? brass.opacity(0.35) : .clear, radius: 10)
+                    
+                    // Lock icon for unavailable sessions
+                    if isDisabled {
+                        VStack {
+                            Spacer()
+                            HStack {
+                                Spacer()
+                                Image(systemName: windowStatus == .closed ? "xmark.circle.fill" : "lock.fill")
+                                    .font(.system(size: 14))
+                                    .foregroundColor(statusColor)
+                                    .background(Circle().fill(Palette.ink2).padding(-4))
+                            }
+                        }
+                        .frame(width: 64, height: 64)
+                    }
+                }
             }
             .buttonStyle(.plain)
-            Text(label)
-                .font(AppFont.mono(11))
-                .tracking(0.6)
-                .foregroundColor(Palette.textDim)
+            .disabled(isDisabled)
+            .opacity(isDisabled ? 0.6 : 1.0)
+            
+            VStack(spacing: 2) {
+                Text(label)
+                    .font(AppFont.mono(11))
+                    .tracking(0.6)
+                    .foregroundColor(Palette.textDim)
+                
+                if let status = statusText {
+                    Text(status)
+                        .font(AppFont.mono(9))
+                        .foregroundColor(statusColor)
+                }
+            }
         }
         .frame(maxWidth: .infinity)
     }

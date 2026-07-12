@@ -18,11 +18,56 @@ struct DayEntry: Codable, Equatable {
     var dawn: Bool = false
     var midday: Bool = false
     var dusk: Bool = false
+    
+    // Timestamp tracking for server-side validation
+    var dawnCompletedAt: Date? = nil
+    var middayCompletedAt: Date? = nil
+    var duskCompletedAt: Date? = nil
+    
     /// Optional reason recorded when a user un-stamps a session or reflects on a missed day.
     var skipReason: String? = nil
 
     var allComplete: Bool { dawn && midday && dusk }
     var sessionCount: Int { [dawn, midday, dusk].filter { $0 }.count }
+    
+    /// Get completion timestamp for a specific session
+    func completedAt(for session: Session) -> Date? {
+        switch session {
+        case .dawn: return dawnCompletedAt
+        case .midday: return middayCompletedAt
+        case .dusk: return duskCompletedAt
+        }
+    }
+    
+    /// Set completion for a session with timestamp
+    mutating func setCompleted(_ session: Session, at timestamp: Date = Date()) {
+        switch session {
+        case .dawn:
+            dawn = true
+            dawnCompletedAt = timestamp
+        case .midday:
+            midday = true
+            middayCompletedAt = timestamp
+        case .dusk:
+            dusk = true
+            duskCompletedAt = timestamp
+        }
+    }
+    
+    /// Clear completion for a session
+    mutating func clearCompleted(_ session: Session) {
+        switch session {
+        case .dawn:
+            dawn = false
+            dawnCompletedAt = nil
+        case .midday:
+            midday = false
+            middayCompletedAt = nil
+        case .dusk:
+            dusk = false
+            duskCompletedAt = nil
+        }
+    }
 }
 
 struct Habit: Identifiable, Codable, Equatable {
@@ -69,6 +114,114 @@ enum Session: String, Codable, CaseIterable, Identifiable {
         case .midday: return "Midday reading — pause, re-read, and refocus."
         case .dusk: return "Evening reading — close the day with your scroll."
         }
+    }
+    
+    /// Time window for this session (in local time)
+    var timeWindow: SessionTimeWindow {
+        switch self {
+        case .dawn: return SessionTimeWindow(start: (5, 0), end: (11, 0))
+        case .midday: return SessionTimeWindow(start: (11, 0), end: (16, 0))
+        case .dusk: return SessionTimeWindow(start: (16, 0), end: (23, 0))
+        }
+    }
+    
+    /// Check if this session is currently within its eligible time window
+    func isEligible(at date: Date = Date()) -> Bool {
+        timeWindow.contains(date)
+    }
+    
+    /// Window status for UI display
+    func windowStatus(at date: Date = Date()) -> SessionWindowStatus {
+        if timeWindow.contains(date) {
+            return .open
+        } else if timeWindow.isPast(date) {
+            return .closed
+        } else {
+            return .upcoming
+        }
+    }
+}
+
+/// Time window configuration for a reading session
+struct SessionTimeWindow {
+    let start: (hour: Int, minute: Int)
+    let end: (hour: Int, minute: Int)
+    
+    func contains(_ date: Date) -> Bool {
+        let calendar = Calendar.current
+        let components = calendar.dateComponents([.hour, .minute], from: date)
+        guard let hour = components.hour, let minute = components.minute else { return false }
+        
+        let currentMinutes = hour * 60 + minute
+        let startMinutes = start.hour * 60 + start.minute
+        let endMinutes = end.hour * 60 + end.minute
+        
+        return currentMinutes >= startMinutes && currentMinutes < endMinutes
+    }
+    
+    func isPast(_ date: Date) -> Bool {
+        let calendar = Calendar.current
+        let components = calendar.dateComponents([.hour, .minute], from: date)
+        guard let hour = components.hour, let minute = components.minute else { return false }
+        
+        let currentMinutes = hour * 60 + minute
+        let endMinutes = end.hour * 60 + end.minute
+        
+        return currentMinutes >= endMinutes
+    }
+    
+    /// Formatted time range for display
+    var displayRange: String {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "h:mm a"
+        
+        var components = DateComponents()
+        components.hour = start.hour
+        components.minute = start.minute
+        let startDate = Calendar.current.date(from: components) ?? Date()
+        
+        components.hour = end.hour
+        components.minute = end.minute
+        let endDate = Calendar.current.date(from: components) ?? Date()
+        
+        return "\(formatter.string(from: startDate)) – \(formatter.string(from: endDate))"
+    }
+}
+
+enum SessionWindowStatus {
+    case upcoming  // Window hasn't opened yet
+    case open      // Currently in the window
+    case closed    // Window has closed
+    
+    var displayText: String {
+        switch self {
+        case .upcoming: return "Opens later"
+        case .open: return "Available now"
+        case .closed: return "Window closed"
+        }
+    }
+}
+
+/// Represents a session completion attempt with server-ready validation
+struct SessionCompletion: Codable, Equatable {
+    let session: Session
+    let dateKey: String
+    let scrollId: Int
+    let completedAt: Date  // Client timestamp - server will override with now()
+    let scrollProgressValidated: Bool  // Client-side friction gate passed
+    
+    /// Validate this completion is within acceptable time windows
+    func isValid() -> Bool {
+        // Check if session window is currently open
+        guard session.isEligible(at: completedAt) else { return false }
+        
+        // Check if this is for today
+        guard dateKey == DateKey.today() else { return false }
+        
+        // Check if scroll friction was satisfied
+        guard scrollProgressValidated else { return false }
+        
+        return true
     }
 }
 

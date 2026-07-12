@@ -130,10 +130,14 @@ struct ContentView: View {
         #else
         .fullScreenCover(isPresented: $showWeeklyRecap) { WeeklyRecapView() }
         #endif
-        .onAppear { runStartOfDayChecks() }
+        .onAppear {
+            store.checkPendingAlarmSession()
+            runStartOfDayChecks()
+        }
         .onChange(of: scenePhase) { _, phase in
             // Refresh one-shot escalation calls whenever the app returns to the foreground.
             if phase == .active {
+                store.checkPendingAlarmSession()
                 store.syncNotifications()
                 runStartOfDayChecks()
             }

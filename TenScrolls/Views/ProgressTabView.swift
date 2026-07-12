@@ -2,10 +2,13 @@ import SwiftUI
 
 struct ProgressTabView: View {
     @EnvironmentObject var store: AppStore
-    @State private var confirmReset = false
+    @Environment(\.displayScale) var displayScale
+    @State private var showResetConfirm = false
     #if canImport(UIKit)
     @State private var exportURL: URL?
     @State private var exportError = false
+    @State private var shareImage: Image?
+    @State private var showExportSheet = false
     #endif
 
     var theme: ThemeOption { Palette.theme(for: store.state.activeThemeId) }
@@ -19,21 +22,7 @@ struct ProgressTabView: View {
     }
 
     private var recentSkips: [(date: String, reason: String)] {
-        var skips: [(String, String)] = []
-        for (date, entry) in store.state.log {
-            if let reason = entry.skipReason {
-                skips.append((date, reason))
-            }
-        }
-        if let missed = store.state.missedDayReasons {
-            for (date, reason) in missed {
-                // Only add if not already added from log
-                if !skips.contains(where: { $0.0 == date }) {
-                    skips.append((date, reason))
-                }
-            }
-        }
-        return skips.sorted(by: { $0.0 > $1.0 }).prefix(5).map { $0 }
+        Array(store.state.skipReasons().prefix(5))
     }
 
     func heatColor(_ count: Int) -> Color {
@@ -61,13 +50,13 @@ struct ProgressTabView: View {
                 achievementsCard
                 sealShop
                 #if canImport(UIKit)
-                commonplaceBookCard
+                exportCard
                 #endif
 
                 Button {
-                    if confirmReset { store.resetAll(); confirmReset = false } else { confirmReset = true }
+                    showResetConfirm = true
                 } label: {
-                    Label(confirmReset ? "Tap again to confirm reset" : "Reset all progress", systemImage: "arrow.counterclockwise")
+                    Label("Reset all progress", systemImage: "arrow.counterclockwise")
                 }
                 .buttonStyle(GhostButtonStyle())
                 .padding(.top, 4)
@@ -78,7 +67,31 @@ struct ProgressTabView: View {
             .padding(.top, 10)
         }
         .background(Palette.background)
+        // Confirmation makes the cost of resetting concrete (the actual streak
+        // number) instead of an abstract "tap again" — much harder to fat-finger
+        // away a 40+ day streak by accident.
+        .confirmationDialog(
+            resetConfirmTitle,
+            isPresented: $showResetConfirm,
+            titleVisibility: .visible
+        ) {
+            Button("Reset everything", role: .destructive) {
+                store.resetAll()
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("This can't be undone. Your scroll badges, achievements, and seals will be lost too.")
+        }
         #if canImport(UIKit)
+        .sheet(isPresented: $showExportSheet) {
+            ProgressExportSheet(
+                store: store,
+                shareImage: $shareImage,
+                exportURL: $exportURL,
+                exportError: $exportError,
+                theme: theme
+            )
+        }
         .sheet(item: $exportURL) { url in
             ShareSheet(items: [url])
         }
@@ -90,25 +103,46 @@ struct ProgressTabView: View {
         #endif
     }
 
+    private var resetConfirmTitle: String {
+        let streak = store.state.currentStreak
+        if streak > 0 {
+            return "Reset progress? You'll lose your \(streak)-day streak."
+        }
+        return "Reset all progress?"
+    }
+
     #if canImport(UIKit)
-    private var commonplaceBookCard: some View {
+    private var exportCard: some View {
         VStack(alignment: .leading, spacing: 0) {
-            SectionLabel(text: "Commonplace Book")
+            SectionLabel(text: "Export & Share")
             CardView {
-                Text("Export your ten scrolls' notes and every journal entry as a laid-out PDF — a keepsake of the year's practice you can keep, print, or share.")
+                Text("Share a snapshot of your streak, or export a full PDF of your Commonplace Book.")
                     .font(.system(size: 13)).foregroundColor(Palette.textDim)
                     .padding(.bottom, 14)
                 Button {
-                    if let url = CommonplaceBook.makePDF(state: store.state, themeColor: theme.brass) {
-                        exportURL = url
-                    } else {
-                        exportError = true
-                    }
+                    showExportSheet = true
                 } label: {
-                    Label("Export as PDF", systemImage: "square.and.arrow.up")
+                    Label("View Export Options", systemImage: "square.and.arrow.up")
                 }
                 .buttonStyle(PrimaryButtonStyle(brass: theme.brass, glow: theme.glow))
             }
+        }
+        .onAppear { renderShareImage() }
+    }
+
+    @MainActor
+    private func renderShareImage() {
+        let card = StreakShareCard(
+            streak: store.state.currentStreak,
+            totalDays: store.state.totalDaysCompleted,
+            masteredCount: store.state.scrolls.filter { $0.status == .mastered }.count,
+            heatCells: heatCells,
+            theme: theme
+        )
+        let renderer = ImageRenderer(content: card)
+        renderer.scale = displayScale
+        if let uiImage = renderer.uiImage {
+            shareImage = Image(uiImage: uiImage)
         }
     }
     #endif
@@ -143,7 +177,7 @@ struct ProgressTabView: View {
                 }
                 Text("Each square is a day · brighter means more sessions read")
                     .font(AppFont.mono(11)).foregroundColor(Palette.textFaint).padding(.top, 8)
-                
+
                 let skips = recentSkips
                 if !skips.isEmpty {
                     VStack(alignment: .leading, spacing: 6) {
@@ -222,53 +256,123 @@ struct ProgressTabView: View {
         return VStack(alignment: .leading, spacing: 0) {
             SectionLabel(text: "Seal Rewards", trailing: "\(seals) available")
             CardView {
-                LazyVGrid(columns: columns, spacing: 10) {
-                    ForEach(Palette.themes) { t in
-                        let unlocked = store.state.unlockedThemeIds.contains(t.id)
-                        let equipped = store.state.activeThemeId == t.id
-                        let canAfford = seals >= t.cost
-                        VStack(spacing: 7) {
-                            Circle().fill(t.glow).overlay(Circle().stroke(t.brass, lineWidth: 2)).frame(width: 34, height: 34)
-                            Text(t.name).font(.system(size: 11)).foregroundColor(Palette.textDim)
-                            if equipped {
-                                Text("Equipped").font(AppFont.mono(10)).foregroundColor(Palette.green)
-                            } else if unlocked {
-                                Button("Equip") { store.equipTheme(t.id) }
-                                    .font(AppFont.mono(10.5))
+                VStack(spacing: 16) {
+                    HStack {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("Streak Shield").font(.system(size: 14, weight: .medium)).foregroundColor(Palette.text)
+                            Text("Protects your streak if you miss a day.").font(.system(size: 11)).foregroundColor(Palette.textDim)
+                        }
+                        Spacer()
+                        Button {
+                            _ = store.buyShield(cost: 30)
+                        } label: {
+                            HStack(spacing: 3) {
+                                Image(systemName: "diamond").font(.system(size: 10))
+                                Text("30")
+                            }
+                            .font(AppFont.mono(10.5))
+                        }
+                        .disabled(seals < 30)
+                        .padding(.horizontal, 12).padding(.vertical, 7)
+                        .background(Palette.ink2)
+                        .foregroundColor(theme.brass)
+                        .overlay(RoundedRectangle(cornerRadius: 8).stroke(Palette.inkLine, lineWidth: 1))
+                        .clipShape(RoundedRectangle(cornerRadius: 8))
+                        .opacity(seals >= 30 ? 1 : 0.4)
+                    }
+
+                    Divider().background(Palette.ink3)
+
+                    LazyVGrid(columns: columns, spacing: 10) {
+                        ForEach(Palette.themes) { t in
+                            let unlocked = store.state.unlockedThemeIds.contains(t.id)
+                            let equipped = store.state.activeThemeId == t.id
+                            let canAfford = seals >= t.cost
+                            VStack(spacing: 7) {
+                                Circle().fill(t.glow).overlay(Circle().stroke(t.brass, lineWidth: 2)).frame(width: 34, height: 34)
+                                Text(t.name).font(.system(size: 11)).foregroundColor(Palette.textDim)
+                                if equipped {
+                                    Text("Equipped").font(AppFont.mono(10)).foregroundColor(Palette.green)
+                                } else if unlocked {
+                                    Button("Equip") { store.equipTheme(t.id) }
+                                        .font(AppFont.mono(10.5))
+                                        .padding(.horizontal, 9).padding(.vertical, 5)
+                                        .background(Palette.ink2)
+                                        .foregroundColor(theme.brass)
+                                        .overlay(RoundedRectangle(cornerRadius: 8).stroke(Palette.inkLine, lineWidth: 1))
+                                        .clipShape(RoundedRectangle(cornerRadius: 8))
+                                } else {
+                                    Button {
+                                        store.unlockTheme(t.id)
+                                    } label: {
+                                        HStack(spacing: 3) {
+                                            Image(systemName: "diamond").font(.system(size: 10))
+                                            Text("\(t.cost)")
+                                        }
+                                        .font(AppFont.mono(10.5))
+                                    }
+                                    .disabled(!canAfford)
                                     .padding(.horizontal, 9).padding(.vertical, 5)
                                     .background(Palette.ink2)
                                     .foregroundColor(theme.brass)
                                     .overlay(RoundedRectangle(cornerRadius: 8).stroke(Palette.inkLine, lineWidth: 1))
                                     .clipShape(RoundedRectangle(cornerRadius: 8))
-                            } else {
-                                Button {
-                                    store.unlockTheme(t.id)
-                                } label: {
-                                    HStack(spacing: 3) {
-                                        Image(systemName: "diamond").font(.system(size: 10))
-                                        Text("\(t.cost)")
-                                    }
-                                    .font(AppFont.mono(10.5))
+                                    .opacity(canAfford ? 1 : 0.4)
                                 }
-                                .disabled(!canAfford)
-                                .padding(.horizontal, 9).padding(.vertical, 5)
-                                .background(Palette.ink2)
-                                .foregroundColor(theme.brass)
-                                .overlay(RoundedRectangle(cornerRadius: 8).stroke(Palette.inkLine, lineWidth: 1))
-                                .clipShape(RoundedRectangle(cornerRadius: 8))
-                                .opacity(canAfford ? 1 : 0.4)
                             }
+                            .padding(.vertical, 12).padding(.horizontal, 6)
+                            .background(Palette.ink3)
+                            .overlay(RoundedRectangle(cornerRadius: 14).stroke(Palette.inkLine, lineWidth: 1))
+                            .clipShape(RoundedRectangle(cornerRadius: 14))
                         }
-                        .padding(.vertical, 12).padding(.horizontal, 6)
-                        .background(Palette.ink3)
-                        .overlay(RoundedRectangle(cornerRadius: 14).stroke(Palette.inkLine, lineWidth: 1))
-                        .clipShape(RoundedRectangle(cornerRadius: 14))
                     }
                 }
             }
         }
     }
 }
+
+#if canImport(UIKit)
+/// Standalone view rendered off-screen (via ImageRenderer) to produce the
+/// shareable streak image. Kept intentionally simple/static — no CardView
+/// chrome dependency — since it needs to look right cropped out of app context.
+private struct StreakShareCard: View {
+    let streak: Int
+    let totalDays: Int
+    let masteredCount: Int
+    let heatCells: [(key: String, count: Int)]
+    let theme: ThemeOption
+
+    private func heatColor(_ count: Int) -> Color {
+        switch count {
+        case 0: return Palette.ink3
+        case 1: return theme.brassDim
+        case 2: return theme.brass
+        default: return theme.glow
+        }
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            Text("TEN SCROLLS").font(AppFont.mono(11)).tracking(1.6).foregroundColor(theme.brass)
+            Text("\(streak) day streak").font(AppFont.display(30)).foregroundColor(Palette.text)
+            Text("\(totalDays) of 300 days · \(masteredCount) of 10 scrolls mastered")
+                .font(AppFont.mono(12)).foregroundColor(Palette.textFaint)
+
+            LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 4), count: 10), spacing: 4) {
+                ForEach(heatCells, id: \.key) { cell in
+                    RoundedRectangle(cornerRadius: 4)
+                        .fill(heatColor(cell.count))
+                        .aspectRatio(1, contentMode: .fit)
+                }
+            }
+        }
+        .padding(24)
+        .frame(width: 360)
+        .background(Palette.background)
+    }
+}
+#endif
 
 /// Minimal wrapping flow layout for the badge row.
 struct FlowLayout: Layout {
@@ -301,3 +405,61 @@ struct FlowLayout: Layout {
         }
     }
 }
+
+#if canImport(UIKit)
+struct ProgressExportSheet: View {
+    @ObservedObject var store: AppStore
+    @Binding var shareImage: Image?
+    @Binding var exportURL: URL?
+    @Binding var exportError: Bool
+    let theme: ThemeOption
+
+    var body: some View {
+        NavigationView {
+            Form {
+                Section(header: Text("Share Streak")) {
+                    if let shareImage {
+                        VStack(alignment: .center, spacing: 16) {
+                            shareImage
+                                .resizable()
+                                .scaledToFit()
+                                .frame(height: 200)
+                                .cornerRadius(12)
+                                .shadow(color: Color.black.opacity(0.1), radius: 5, x: 0, y: 2)
+                            
+                            ShareLink(
+                                item: shareImage,
+                                preview: SharePreview("My Ten Scrolls streak", image: shareImage)
+                            ) {
+                                Label("Share Image", systemImage: "square.and.arrow.up")
+                                    .frame(maxWidth: .infinity)
+                            }
+                            .buttonStyle(.borderedProminent)
+                            .tint(theme.brass)
+                        }
+                        .padding(.vertical, 8)
+                    } else {
+                        Text("Generating image...")
+                            .foregroundColor(.secondary)
+                    }
+                }
+                
+                Section(header: Text("Commonplace Book"), footer: Text("A keepsake of the year's practice you can keep or print.")) {
+                    Button {
+                        if let url = CommonplaceBook.makePDF(state: store.state, themeColor: theme.brass) {
+                            exportURL = url
+                        } else {
+                            exportError = true
+                        }
+                    } label: {
+                        Label("Export PDF", systemImage: "doc.text")
+                    }
+                    .foregroundColor(theme.brass)
+                }
+            }
+            .navigationTitle("Export & Share")
+            .navigationBarTitleDisplayMode(.inline)
+        }
+    }
+}
+#endif

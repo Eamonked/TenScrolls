@@ -154,17 +154,38 @@ struct TodayView: View {
         let key = DateKey.today()
         let entry = store.state.log[key] ?? DayEntry(scrollId: store.state.targetScrollId ?? 0)
         return HStack(spacing: 12) {
-            StampButton(label: "DAWN", systemImage: "sunrise.fill", done: entry.dawn, brass: theme.brass, glow: theme.glow) {
+            StampButton(
+                label: "DAWN",
+                systemImage: "sunrise.fill",
+                done: entry.dawn,
+                brass: theme.brass,
+                glow: theme.glow,
+                windowStatus: Session.dawn.windowStatus()
+            ) {
                 let wasDone = entry.dawn
                 store.toggleSession(\.dawn)
                 if wasDone { promptSkip(key) }
             }
-            StampButton(label: "MIDDAY", systemImage: "sun.max.fill", done: entry.midday, brass: theme.brass, glow: theme.glow) {
+            StampButton(
+                label: "MIDDAY",
+                systemImage: "sun.max.fill",
+                done: entry.midday,
+                brass: theme.brass,
+                glow: theme.glow,
+                windowStatus: Session.midday.windowStatus()
+            ) {
                 let wasDone = entry.midday
                 store.toggleSession(\.midday)
                 if wasDone { promptSkip(key) }
             }
-            StampButton(label: "DUSK", systemImage: "sunset.fill", done: entry.dusk, brass: theme.brass, glow: theme.glow) {
+            StampButton(
+                label: "DUSK",
+                systemImage: "sunset.fill",
+                done: entry.dusk,
+                brass: theme.brass,
+                glow: theme.glow,
+                windowStatus: Session.dusk.windowStatus()
+            ) {
                 let wasDone = entry.dusk
                 store.toggleSession(\.dusk)
                 if wasDone { promptSkip(key) }
