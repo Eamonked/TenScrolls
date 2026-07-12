@@ -64,6 +64,7 @@ private struct JournalEntryRow: View {
     let entry: JournalEntry
     let scroll: Scroll?
     let onDelete: () -> Void
+    @State private var expanded = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -71,16 +72,31 @@ private struct JournalEntryRow: View {
                 Text("\(DateKey.short(entry.date)) · Scroll \(scroll?.roman ?? "—")")
                     .font(AppFont.mono(10.5)).foregroundColor(Palette.textFaint)
                 Spacer()
-                Button(action: onDelete) {
-                    Image(systemName: "trash").font(.system(size: 12)).foregroundColor(Palette.textFaint)
+                if expanded {
+                    Button(action: onDelete) {
+                        Image(systemName: "trash").font(.system(size: 12)).foregroundColor(Palette.textFaint)
+                    }
+                    .buttonStyle(.plain)
                 }
-                .buttonStyle(.plain)
+                Image(systemName: "chevron.down")
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundColor(Palette.textFaint)
+                    .rotationEffect(.degrees(expanded ? 180 : 0))
             }
-            Text(entry.text).font(.system(size: 13.5)).foregroundColor(Palette.text).lineSpacing(4)
+            Text(entry.text)
+                .font(.system(size: 13.5))
+                .foregroundColor(Palette.text)
+                .lineSpacing(4)
+                .lineLimit(expanded ? nil : 1)
+                .truncationMode(.tail)
         }
         .padding(14)
         .background(Palette.ink2)
         .overlay(RoundedRectangle(cornerRadius: 14).stroke(Palette.inkLine, lineWidth: 1))
         .clipShape(RoundedRectangle(cornerRadius: 14))
+        .contentShape(Rectangle())
+        .onTapGesture {
+            withAnimation(.easeInOut(duration: 0.2)) { expanded.toggle() }
+        }
     }
 }

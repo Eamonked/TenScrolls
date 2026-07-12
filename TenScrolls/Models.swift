@@ -17,20 +17,39 @@ struct Scroll: Identifiable, Codable, Equatable {
     /// once the reading is actually finished for the day.
     var bookmarkParagraphIndex: Int? = nil
 
-    /// Splits `notes` into paragraph-sized reading units. Prefers blank-line
-    /// breaks (the natural stanza breaks in most transcribed scrolls); falls
-    /// back to single-line breaks, and finally to the whole block, so this
-    /// degrades gracefully regardless of how a given scroll was transcribed.
+    /// Splits `notes` into paragraph-sized reading units, using a blank line
+    /// as the only real paragraph break. `notes` is normalized at write time
+    /// (see `Scroll.normalizedNotes`), so this just splits on it — but it
+    /// re-normalizes here too as a safety net for any notes written before
+    /// that existed, or set some other way (e.g. sync, scripting).
     var paragraphs: [String] {
-        func clean(_ pieces: [String]) -> [String] {
-            pieces.map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }.filter { !$0.isEmpty }
-        }
-        let byBlankLine = clean(notes.components(separatedBy: "\n\n"))
-        if byBlankLine.count > 1 { return byBlankLine }
-        let byLine = clean(notes.components(separatedBy: "\n"))
-        if !byLine.isEmpty { return byLine }
-        let trimmed = notes.trimmingCharacters(in: .whitespacesAndNewlines)
-        return trimmed.isEmpty ? [] : [trimmed]
+        Scroll.normalizedNotes(notes)
+            .components(separatedBy: "\n\n")
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+    }
+}
+
+extension Scroll {
+    /// Reflows pasted text so a single blank line is the only thing that
+    /// counts as a paragraph break. Notes/Word/OCR pastes typically insert a
+    /// line break after every line — left alone, that shatters `paragraphs`
+    /// into one fragment per line. This collapses those stray single breaks
+    /// back into flowing sentences while leaving intentional blank-line
+    /// breaks (and existing well-formed paragraphs) untouched.
+    static func normalizedNotes(_ raw: String) -> String {
+        let blocks = raw
+            .replacingOccurrences(of: "\r\n", with: "\n")
+            .components(separatedBy: "\n\n")
+            .map { block -> String in
+                block
+                    .components(separatedBy: "\n")
+                    .map { $0.trimmingCharacters(in: .whitespaces) }
+                    .filter { !$0.isEmpty }
+                    .joined(separator: " ")
+            }
+            .filter { !$0.isEmpty }
+        return blocks.joined(separator: "\n\n")
     }
 }
 

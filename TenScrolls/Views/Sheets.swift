@@ -97,7 +97,7 @@ struct ScrollEditorSheet: View {
                             var updated = scroll
                             updated.title = title
                             updated.theme = theme
-                            updated.notes = notes
+                            updated.notes = Scroll.normalizedNotes(notes)
                             onSave(updated)
                             editing = false
                         }
@@ -341,15 +341,40 @@ struct ScrollEditorSheet: View {
             Text("ONE-LINE THEME").font(AppFont.mono(10.5)).tracking(1.2).foregroundColor(Palette.textFaint).padding(.top, 12)
             TextField("e.g. what this scroll asks of you", text: $theme).textFieldStyle(AppTextFieldStyle())
 
-            Text("YOUR NOTES").font(AppFont.mono(10.5)).tracking(1.2).foregroundColor(Palette.textFaint).padding(.top, 12)
-            TextEditor(text: $notes)
-                .frame(minHeight: 200)
-                .padding(8)
-                .scrollContentBackground(.hidden)
-                .background(Palette.ink3)
-                .overlay(RoundedRectangle(cornerRadius: 10).stroke(Palette.inkLine, lineWidth: 1))
-                .clipShape(RoundedRectangle(cornerRadius: 10))
-                .foregroundColor(Palette.text)
+            HStack {
+                Text("YOUR NOTES").font(AppFont.mono(10.5)).tracking(1.2).foregroundColor(Palette.textFaint)
+                Spacer()
+                if !notes.isEmpty {
+                    Button("Clean up") {
+                        notes = Scroll.normalizedNotes(notes)
+                    }
+                    .font(.system(size: 11.5, weight: .medium))
+                    .foregroundColor(themeOption.brass)
+                }
+            }
+            .padding(.top, 12)
+            ZStack(alignment: .topLeading) {
+                TextEditor(text: $notes)
+                    .frame(minHeight: 200)
+                    .padding(8)
+                    .scrollContentBackground(.hidden)
+                    .background(Palette.ink3)
+                    .overlay(RoundedRectangle(cornerRadius: 10).stroke(Palette.inkLine, lineWidth: 1))
+                    .clipShape(RoundedRectangle(cornerRadius: 10))
+                    .foregroundColor(Palette.text)
+                if notes.isEmpty {
+                    Text("Paste or type freely — leave a blank line between paragraphs, and everything else sorts itself out.")
+                        .font(.system(size: 13))
+                        .foregroundColor(Palette.textFaint)
+                        .padding(.horizontal, 14)
+                        .padding(.vertical, 16)
+                        .allowsHitTesting(false)
+                }
+            }
+            Text("Tip: pasted text often has a line break after every line. Tap “Clean up” and it'll reflow into proper paragraphs.")
+                .font(.system(size: 11.5))
+                .foregroundColor(Palette.textFaint)
+                .padding(.top, 4)
         }
         .padding(20)
     }
@@ -396,18 +421,38 @@ struct JournalComposerSheet: View {
             VStack(alignment: .leading, spacing: 8) {
                 Text("\(scroll.map { "SCROLL \($0.roman)" } ?? "GENERAL") · \(DateKey.short(DateKey.today())) · +15 XP")
                     .font(AppFont.mono(10.5)).tracking(1.0).foregroundColor(Palette.textFaint)
-                TextEditor(text: $text)
-                    .frame(minHeight: 220)
-                    .padding(8)
-                    .scrollContentBackground(.hidden)
-                    .background(Palette.ink3)
-                    .overlay(RoundedRectangle(cornerRadius: 10).stroke(Palette.inkLine, lineWidth: 1))
-                    .clipShape(RoundedRectangle(cornerRadius: 10))
-                    .foregroundColor(Palette.text)
+                HStack {
+                    Spacer()
+                    if !text.isEmpty {
+                        Button("Clean up") {
+                            text = Scroll.normalizedNotes(text)
+                        }
+                        .font(.system(size: 11.5, weight: .medium))
+                        .foregroundColor(themeOption.brass)
+                    }
+                }
+                ZStack(alignment: .topLeading) {
+                    TextEditor(text: $text)
+                        .frame(minHeight: 220)
+                        .padding(8)
+                        .scrollContentBackground(.hidden)
+                        .background(Palette.ink3)
+                        .overlay(RoundedRectangle(cornerRadius: 10).stroke(Palette.inkLine, lineWidth: 1))
+                        .clipShape(RoundedRectangle(cornerRadius: 10))
+                        .foregroundColor(Palette.text)
+                    if text.isEmpty {
+                        Text("What stood out today? Write freely — leave a blank line between thoughts if you want them kept separate.")
+                            .font(.system(size: 13))
+                            .foregroundColor(Palette.textFaint)
+                            .padding(.horizontal, 14)
+                            .padding(.vertical, 16)
+                            .allowsHitTesting(false)
+                    }
+                }
                 Button("Save entry") {
                     let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
                     guard !trimmed.isEmpty else { return }
-                    onSave(trimmed)
+                    onSave(Scroll.normalizedNotes(trimmed))
                 }
                 .buttonStyle(PrimaryButtonStyle(brass: themeOption.brass, glow: themeOption.glow, disabled: text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty))
                 .disabled(text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
