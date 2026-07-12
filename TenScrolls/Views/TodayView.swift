@@ -160,7 +160,7 @@ struct TodayView: View {
                 done: entry.dawn,
                 brass: theme.brass,
                 glow: theme.glow,
-                windowStatus: Session.dawn.windowStatus()
+                windowStatus: Session.dawn.windowStatus(startedAt: entry.dawnStartedAt)
             ) {
                 let wasDone = entry.dawn
                 store.toggleSession(\.dawn)
@@ -172,7 +172,7 @@ struct TodayView: View {
                 done: entry.midday,
                 brass: theme.brass,
                 glow: theme.glow,
-                windowStatus: Session.midday.windowStatus()
+                windowStatus: Session.midday.windowStatus(startedAt: entry.middayStartedAt)
             ) {
                 let wasDone = entry.midday
                 store.toggleSession(\.midday)
@@ -184,7 +184,7 @@ struct TodayView: View {
                 done: entry.dusk,
                 brass: theme.brass,
                 glow: theme.glow,
-                windowStatus: Session.dusk.windowStatus()
+                windowStatus: Session.dusk.windowStatus(startedAt: entry.duskStartedAt)
             ) {
                 let wasDone = entry.dusk
                 store.toggleSession(\.dusk)

@@ -196,6 +196,19 @@ final class AppStore: ObservableObject {
 
     // MARK: - Mutations
 
+    /// Called the moment the reader opens a scroll to read it — before any stamp
+    /// tap. Anchors whichever session is currently eligible so that a later tap
+    /// (possibly after the window has rolled over) can still land. See
+    /// `Session.isMarkable`.
+    func recordReadingStarted(at date: Date = Date()) {
+        guard let eligible = Session.allCases.first(where: { $0.isEligible(at: date) }) else { return }
+        guard let targetId = state.targetScrollId else { return }
+        let key = DateKey.today()
+        var entry = state.log[key] ?? DayEntry(scrollId: targetId)
+        entry.setStarted(eligible, at: date)
+        state.log[key] = entry
+    }
+
     func toggleSession(_ session: WritableKeyPath<DayEntry, Bool>) {
         // Determine which session this is
         let sessionType: Session = {
@@ -207,27 +220,31 @@ final class AppStore: ObservableObject {
             }
         }()
         
-        // Validate time window eligibility
-        let currentTime = Date()
-        if !sessionType.isEligible(at: currentTime) {
-            let status = sessionType.windowStatus(at: currentTime)
-            switch status {
-            case .upcoming:
-                showToast("\(sessionType.label) opens at \(sessionType.timeWindow.displayRange)")
-            case .closed:
-                showToast("\(sessionType.label) window has closed for today")
-            case .open:
-                break // Should not reach here
-            }
-            return
-        }
-        
         // Log against the active scroll on the first pass, or the reread scroll in cycle mode.
         guard let targetId = state.targetScrollId else { return }
         let key = DateKey.today()
         let wasComplete = state.log[key]?.allComplete ?? false
         var entry = state.log[key] ?? DayEntry(scrollId: targetId)
         entry.scrollId = targetId
+
+        // Validate eligibility. The live window is checked first; if it's already
+        // closed, fall back to the reader's recorded start time for this session —
+        // if they opened the scroll while the window was still open, a bounded
+        // grace period covers the gap between finishing the read and tapping the
+        // stamp, so a completed read isn't punished by unrelated UI lag.
+        let currentTime = Date()
+        if !sessionType.isMarkable(at: currentTime, startedAt: entry.startedAt(for: sessionType)) {
+            let status = sessionType.windowStatus(at: currentTime)
+            switch status {
+            case .upcoming:
+                showToast("\(sessionType.label) opens at \(sessionType.timeWindow.displayRange)")
+            case .closed:
+                showToast("\(sessionType.label) window has closed for today")
+            case .open, .grace:
+                break // Should not reach here — isMarkable already returned false
+            }
+            return
+        }
         
         // Toggle with timestamp tracking
         let wasSet = entry[keyPath: session]
@@ -370,11 +387,34 @@ final class AppStore: ObservableObject {
         afterMutation()
     }
 
+    /// Records (or clears, if paragraphIndex is nil) which paragraph the reader
+    /// last stopped at for a scroll, so reopening it can resume there.
+    func setBookmark(scrollId: Int, paragraphIndex: Int?) {
+        guard let idx = state.scrolls.firstIndex(where: { $0.id == scrollId }),
+              state.scrolls[idx].bookmarkParagraphIndex != paragraphIndex else { return }
+        state.scrolls[idx].bookmarkParagraphIndex = paragraphIndex
+        afterMutation()
+    }
+
     func addJournalEntry(_ text: String) {
         let entry = JournalEntry(
             id: "j\(Int(Date().timeIntervalSince1970 * 1000))",
             date: DateKey.today(),
             scrollId: state.activeScroll?.id,
+            text: text
+        )
+        state.journal.append(entry)
+        afterMutation()
+    }
+
+    /// Adds a journal entry for a specific scroll — used when quoting a
+    /// highlighted excerpt, which should stay attributed to the scroll being
+    /// read even during the reread cycle, when `activeScroll` is nil.
+    func addJournalEntry(_ text: String, scrollId: Int?) {
+        let entry = JournalEntry(
+            id: "j\(Int(Date().timeIntervalSince1970 * 1000))",
+            date: DateKey.today(),
+            scrollId: scrollId,
             text: text
         )
         state.journal.append(entry)

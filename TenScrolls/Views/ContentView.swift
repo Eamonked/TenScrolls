@@ -162,10 +162,12 @@ struct ContentView: View {
                 activeSheet = nil
             }
         case .scrollEditor(let scroll):
-            ScrollEditorSheet(scroll: scroll) { updated in
+            ScrollEditorSheet(scroll: scroll, onSave: { updated in
                 store.saveScroll(updated)
                 activeSheet = nil
-            }
+            }, onReadingStarted: {
+                store.recordReadingStarted()
+            })
         case .info:
             InfoSheet()
         case .notifSettings:
@@ -202,5 +204,3 @@ struct ContentView: View {
         }
     }
 }
-
-

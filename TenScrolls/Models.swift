@@ -11,6 +11,27 @@ struct Scroll: Identifiable, Codable, Equatable {
     var theme: String = ""
     var notes: String = ""
     var status: ScrollStatus
+
+    /// Which paragraph of `notes` the reader last stopped at, so reopening the
+    /// scroll can resume there instead of dumping them back at the top. Cleared
+    /// once the reading is actually finished for the day.
+    var bookmarkParagraphIndex: Int? = nil
+
+    /// Splits `notes` into paragraph-sized reading units. Prefers blank-line
+    /// breaks (the natural stanza breaks in most transcribed scrolls); falls
+    /// back to single-line breaks, and finally to the whole block, so this
+    /// degrades gracefully regardless of how a given scroll was transcribed.
+    var paragraphs: [String] {
+        func clean(_ pieces: [String]) -> [String] {
+            pieces.map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }.filter { !$0.isEmpty }
+        }
+        let byBlankLine = clean(notes.components(separatedBy: "\n\n"))
+        if byBlankLine.count > 1 { return byBlankLine }
+        let byLine = clean(notes.components(separatedBy: "\n"))
+        if !byLine.isEmpty { return byLine }
+        let trimmed = notes.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? [] : [trimmed]
+    }
 }
 
 struct DayEntry: Codable, Equatable {
@@ -23,7 +44,16 @@ struct DayEntry: Codable, Equatable {
     var dawnCompletedAt: Date? = nil
     var middayCompletedAt: Date? = nil
     var duskCompletedAt: Date? = nil
-    
+
+    // The moment the reader actually opened the scroll for this session — captured
+    // the instant the reading view appears, before the mark-complete tap. This is
+    // the true commitment moment; the stamp tap is just bookkeeping that can lag
+    // behind it by a few minutes. Used to keep a session markable even if the
+    // window rolls over in that gap. First-write-wins per session, per day.
+    var dawnStartedAt: Date? = nil
+    var middayStartedAt: Date? = nil
+    var duskStartedAt: Date? = nil
+
     /// Optional reason recorded when a user un-stamps a session or reflects on a missed day.
     var skipReason: String? = nil
 
@@ -36,6 +66,25 @@ struct DayEntry: Codable, Equatable {
         case .dawn: return dawnCompletedAt
         case .midday: return middayCompletedAt
         case .dusk: return duskCompletedAt
+        }
+    }
+
+    /// Get the moment the reader opened this session's scroll to read it, if any.
+    func startedAt(for session: Session) -> Date? {
+        switch session {
+        case .dawn: return dawnStartedAt
+        case .midday: return middayStartedAt
+        case .dusk: return duskStartedAt
+        }
+    }
+
+    /// Record the first time the reader opened this session's scroll today.
+    /// Deliberately first-write-wins: only the earliest engagement counts as the anchor.
+    mutating func setStarted(_ session: Session, at timestamp: Date) {
+        switch session {
+        case .dawn: if dawnStartedAt == nil { dawnStartedAt = timestamp }
+        case .midday: if middayStartedAt == nil { middayStartedAt = timestamp }
+        case .dusk: if duskStartedAt == nil { duskStartedAt = timestamp }
         }
     }
     
@@ -129,6 +178,25 @@ enum Session: String, Codable, CaseIterable, Identifiable {
     func isEligible(at date: Date = Date()) -> Bool {
         timeWindow.contains(date)
     }
+
+    /// How long after a window closes a session can still be stamped, provided the
+    /// reader actually opened the scroll (started reading) before it closed. This
+    /// absorbs the gap between finishing the read and tapping the stamp elsewhere
+    /// in the app — the read is the real commitment, the tap is just bookkeeping —
+    /// without weakening the window for someone who never opened the scroll at all.
+    static let markGraceMinutes = 30
+
+    /// Whether this session can still be marked complete right now. Honors the
+    /// live window first; if that's closed, falls back to `startedAt` — the
+    /// timestamp captured when the reader opened the scroll — and allows a bounded
+    /// grace period past the window's close, but only if that engagement itself
+    /// happened inside the window.
+    func isMarkable(at now: Date = Date(), startedAt: Date?) -> Bool {
+        if timeWindow.contains(now) { return true }
+        guard let startedAt, timeWindow.contains(startedAt) else { return false }
+        let graceDeadline = timeWindow.endDate(anchoredTo: now).addingTimeInterval(TimeInterval(Session.markGraceMinutes * 60))
+        return now <= graceDeadline
+    }
     
     /// Window status for UI display
     func windowStatus(at date: Date = Date()) -> SessionWindowStatus {
@@ -139,6 +207,15 @@ enum Session: String, Codable, CaseIterable, Identifiable {
         } else {
             return .upcoming
         }
+    }
+
+    /// Window status for UI display, aware of a recorded reading-start anchor.
+    /// Use this wherever a stamp button reflects `isMarkable`, so the label never
+    /// says "closed" for a session the reader can still tap.
+    func windowStatus(at date: Date = Date(), startedAt: Date?) -> SessionWindowStatus {
+        let base = windowStatus(at: date)
+        guard base == .closed else { return base }
+        return isMarkable(at: date, startedAt: startedAt) ? .grace : .closed
     }
 }
 
@@ -169,6 +246,16 @@ struct SessionTimeWindow {
         
         return currentMinutes >= endMinutes
     }
+
+    /// This window's end time as a concrete Date on the same calendar day as `date`.
+    /// Used to compute grace-period deadlines past the window's close.
+    func endDate(anchoredTo date: Date) -> Date {
+        let calendar = Calendar.current
+        var components = calendar.dateComponents([.year, .month, .day], from: date)
+        components.hour = end.hour
+        components.minute = end.minute
+        return calendar.date(from: components) ?? date
+    }
     
     /// Formatted time range for display
     var displayRange: String {
@@ -191,12 +278,14 @@ struct SessionTimeWindow {
 enum SessionWindowStatus {
     case upcoming  // Window hasn't opened yet
     case open      // Currently in the window
-    case closed    // Window has closed
-    
+    case grace     // Window closed, but reading started in time — still markable
+    case closed    // Window has closed, and it's too late to mark
+
     var displayText: String {
         switch self {
         case .upcoming: return "Opens later"
         case .open: return "Available now"
+        case .grace: return "Still markable — you started in time"
         case .closed: return "Window closed"
         }
     }

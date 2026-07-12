@@ -60,13 +60,13 @@ struct StampButton: View {
     let action: () -> Void
 
     private var isDisabled: Bool {
-        !done && windowStatus != .open
+        !done && windowStatus != .open && windowStatus != .grace
     }
     
     private var statusColor: Color {
         if done { return brass }
         switch windowStatus {
-        case .open: return Palette.textDim
+        case .open, .grace: return Palette.textDim
         case .upcoming: return Palette.textFaint.opacity(0.5)
         case .closed: return Color.red.opacity(0.6)
         }
@@ -75,7 +75,7 @@ struct StampButton: View {
     private var statusText: String? {
         guard !done else { return nil }
         switch windowStatus {
-        case .open: return nil
+        case .open, .grace: return nil
         case .upcoming: return "Soon"
         case .closed: return "Missed"
         }

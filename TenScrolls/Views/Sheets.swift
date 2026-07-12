@@ -9,6 +9,7 @@ struct ScrollEditorSheet: View {
     let scroll: Scroll
     var onSave: (Scroll) -> Void
     var onReadingComplete: (() -> Void)? = nil  // Callback when friction gate is passed
+    var onReadingStarted: (() -> Void)? = nil  // Callback the instant the reading view first appears
 
     @State private var title: String
     @State private var theme: String
@@ -20,6 +21,10 @@ struct ScrollEditorSheet: View {
     @State private var hasScrolledToBottom = false
     @State private var readingStartTime: Date?
     @State private var currentTime = Date()  // For timer updates
+
+    // Highlight-to-journal state: set when the reader picks "Add to Journal"
+    // from a text selection; presenting a sheet for it is driven off this.
+    @State private var pendingExcerpt: String?
     
     private let timer = Timer.publish(every: 1, on: .main, in: .common).autoconnect()
     
@@ -39,10 +44,11 @@ struct ScrollEditorSheet: View {
         return result
     }
 
-    init(scroll: Scroll, onSave: @escaping (Scroll) -> Void, onReadingComplete: (() -> Void)? = nil) {
+    init(scroll: Scroll, onSave: @escaping (Scroll) -> Void, onReadingComplete: (() -> Void)? = nil, onReadingStarted: (() -> Void)? = nil) {
         self.scroll = scroll
         self.onSave = onSave
         self.onReadingComplete = onReadingComplete
+        self.onReadingStarted = onReadingStarted
         _title = State(initialValue: scroll.title)
         _theme = State(initialValue: scroll.theme)
         _notes = State(initialValue: scroll.notes)
@@ -176,14 +182,16 @@ struct ScrollEditorSheet: View {
                         .padding(.bottom, 24)
                     }
 
-                    // Notes body
+                    // Notes body — rendered paragraph by paragraph so each one
+                    // can be highlighted (Add to Journal) and tapped (bookmark
+                    // where reading stopped) independently.
                     if !notes.isEmpty {
-                        Text(notes)
-                            .font(.system(size: 16, weight: .regular, design: .serif))
-                            .foregroundColor(Palette.text.opacity(0.92))
-                            .lineSpacing(7)
-                            .multilineTextAlignment(.leading)
-                            .fixedSize(horizontal: false, vertical: true)
+                        VStack(alignment: .leading, spacing: 22) {
+                            ForEach(Array(scroll.paragraphs.enumerated()), id: \.offset) { index, paragraph in
+                                paragraphBlock(paragraph, index: index)
+                                    .id(index)
+                            }
+                        }
                     }
 
                     // Empty state
@@ -250,9 +258,68 @@ struct ScrollEditorSheet: View {
             .onAppear {
                 if hasContent && readingStartTime == nil {
                     readingStartTime = Date()
+                    onReadingStarted?()
+                }
+                if let bookmark = scroll.bookmarkParagraphIndex {
+                    // Slight delay lets the ScrollView finish laying out before
+                    // we ask it to jump — jumping on the same frame it appears
+                    // can silently no-op.
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) {
+                        withAnimation { proxy.scrollTo(bookmark, anchor: .top) }
+                    }
+                }
+            }
+            .onChange(of: hasScrolledToBottom) { _, finished in
+                // The reading is done — the bookmark has served its purpose.
+                if finished, scroll.bookmarkParagraphIndex != nil {
+                    store.setBookmark(scrollId: scroll.id, paragraphIndex: nil)
+                }
+            }
+            .sheet(isPresented: Binding(
+                get: { pendingExcerpt != nil },
+                set: { if !$0 { pendingExcerpt = nil } }
+            )) {
+                if let excerpt = pendingExcerpt {
+                    JournalComposerSheet(scroll: scroll, initialText: quotedExcerpt(excerpt)) { text in
+                        store.addJournalEntry(text, scrollId: scroll.id)
+                        pendingExcerpt = nil
+                    }
                 }
             }
         }
+    }
+
+    private func quotedExcerpt(_ excerpt: String) -> String {
+        "\u{201C}\(excerpt)\u{201D}\n\n— Scroll \(scroll.roman)"
+    }
+
+    @ViewBuilder
+    private func paragraphBlock(_ paragraph: String, index: Int) -> some View {
+        let isBookmarked = scroll.bookmarkParagraphIndex == index
+        VStack(alignment: .leading, spacing: 8) {
+            if isBookmarked {
+                Label("You stopped here", systemImage: "bookmark.fill")
+                    .font(AppFont.mono(10))
+                    .tracking(0.6)
+                    .foregroundColor(themeOption.brass)
+            }
+            SelectableParagraphView(
+                text: paragraph,
+                fontSize: 16,
+                textColor: UIColor(Palette.text.opacity(0.92)),
+                lineSpacing: 7,
+                onAddToJournal: { excerpt in
+                    pendingExcerpt = excerpt
+                },
+                onTapped: {
+                    store.setBookmark(scrollId: scroll.id, paragraphIndex: index)
+                }
+            )
+        }
+        .padding(.vertical, isBookmarked ? 10 : 0)
+        .padding(.horizontal, isBookmarked ? 10 : 0)
+        .background(isBookmarked ? themeOption.brass.opacity(0.07) : Color.clear)
+        .cornerRadius(8)
     }
 
     // MARK: - Editing View
@@ -314,7 +381,13 @@ struct JournalComposerSheet: View {
     @Environment(\.dismiss) private var dismiss
     let scroll: Scroll?
     var onSave: (String) -> Void
-    @State private var text = ""
+    @State private var text: String
+
+    init(scroll: Scroll?, initialText: String = "", onSave: @escaping (String) -> Void) {
+        self.scroll = scroll
+        self.onSave = onSave
+        _text = State(initialValue: initialText)
+    }
 
     var themeOption: ThemeOption { Palette.theme(for: store.state.activeThemeId) }
 
