@@ -66,9 +66,8 @@ struct TenScrollsShortcuts: AppShortcutsProvider {
 // MARK: - AlarmScheduler
 
 /// Drop-in replacement for the old `store.notifier` calendar-notification
-/// scheduling. Mirrors the same surface (`authorizationStatus`, `sendTest`,
-/// `sendTestCall`, prefs-driven rescheduling) but rings through AlarmKit on
-/// iOS 26+.
+/// scheduling. Mirrors the same surface (`authorizationStatus`, prefs-driven
+/// rescheduling) but rings through AlarmKit on iOS 26+.
 ///
 /// The old `NotificationManager` is kept for pre-iOS 26 fallback — see
 /// `AppStore` for the `#available` branching.
@@ -270,30 +269,6 @@ final class AlarmScheduler: ObservableObject {
     func handleStop(sessionId: String) async {
         guard let session = Session(rawValue: sessionId) else { return }
         await cancel(idKey(session, call: true))
-    }
-
-    // MARK: Test helpers (mirrors old notifier.sendTest / sendTestCall)
-
-    func sendTest() {
-        Task {
-            guard await requestAuthorizationIfNeeded() else { return }
-            let fireDate = Date().addingTimeInterval(5)
-            let comps = Calendar.current.dateComponents([.hour, .minute], from: fireDate)
-            _ = try? await scheduleSession(.dawn, hhmm: String(format: "%02d:%02d", comps.hour ?? 0, comps.minute ?? 0))
-        }
-    }
-
-    func sendTestCall() {
-        Task {
-            guard await requestAuthorizationIfNeeded() else { return }
-            let fireDate = Date().addingTimeInterval(5)
-            let comps = Calendar.current.dateComponents([.hour, .minute], from: fireDate)
-            _ = try? await scheduleEscalationCall(
-                for: .dawn,
-                hhmm: String(format: "%02d:%02d", comps.hour ?? 0, comps.minute ?? 0),
-                afterMinutes: 0
-            )
-        }
     }
 
     // MARK: Helpers

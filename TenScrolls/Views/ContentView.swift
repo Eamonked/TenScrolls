@@ -31,7 +31,8 @@ struct ContentView: View {
 
     var body: some View {
         ZStack(alignment: .top) {
-            Palette.background.ignoresSafeArea()
+            let colors = AdaptivePalette(mode: store.state.appearanceMode)
+            colors.background.ignoresSafeArea()
 
             TabView(selection: $store.selectedTab) {
                 NavigationStack {
@@ -81,16 +82,19 @@ struct ContentView: View {
                 .tag(4)
             }
             .tint(currentTheme.brass)
+            .environment(\.appearanceMode, store.state.appearanceMode)
 
             if let toast = store.toast {
                 ToastView(message: toast, brass: currentTheme.brass)
                     .transition(.move(edge: .top).combined(with: .opacity))
                     .padding(.top, 8)
                     .animation(.easeOut(duration: 0.3), value: store.toast)
+                    .environment(\.appearanceMode, store.state.appearanceMode)
             }
         }
         .sheet(item: $activeSheet) { sheet in
             sheetContent(for: sheet)
+                .environment(\.appearanceMode, store.state.appearanceMode)
         }
         .fullScreenCover(item: $activeCall) { call in
             IncomingCallView(
@@ -98,6 +102,7 @@ struct ContentView: View {
                 onAccept: { store.answerCall() },
                 onDecline: { store.declineCall() }
             )
+            .environment(\.appearanceMode, store.state.appearanceMode)
         }
         .onChange(of: store.incomingCall) { _, newCall in
             if let call = newCall {

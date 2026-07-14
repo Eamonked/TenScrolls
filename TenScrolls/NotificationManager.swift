@@ -90,31 +90,6 @@ final class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
         }
     }
 
-    /// Fires a reminder-style notification a few seconds out so the user can confirm
-    /// permissions and delivery are working.
-    func sendTest() {
-        let content = UNMutableNotificationContent()
-        content.title = "Ten Scrolls"
-        content.body = "Reminders are working. You'll be nudged at your set times."
-        content.sound = .default
-        let trigger = UNTimeIntervalNotificationTrigger(timeInterval: 3, repeats: false)
-        center.add(UNNotificationRequest(identifier: "test-notification", content: content, trigger: trigger))
-    }
-
-    /// Fires a call-type notification in 5 seconds so the user can verify the full
-    /// incoming-call flow without waiting for a real session timeout.
-    func sendTestCall() {
-        let content = UNMutableNotificationContent()
-        content.title = "Dawn Reading — incoming call"
-        content.body = "Test: tap to see the incoming call screen."
-        content.sound = .defaultCritical
-        content.userInfo = ["session": Session.dawn.rawValue, "type": "call"]
-        content.interruptionLevel = .timeSensitive
-        content.categoryIdentifier = "call"
-        let trigger = UNTimeIntervalNotificationTrigger(timeInterval: 5, repeats: false)
-        center.add(UNNotificationRequest(identifier: "test-call", content: content, trigger: trigger))
-    }
-
     // MARK: - UNUserNotificationCenterDelegate
 
     func userNotificationCenter(
@@ -157,6 +132,12 @@ final class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
 
     private func reminderID(_ session: Session) -> String { "reminder-\(session.rawValue)" }
     private func callID(_ session: Session) -> String { "call-\(session.rawValue)" }
+    
+    /// Cancel the escalation call for a specific session. Called when a session
+    /// is completed to prevent the call from firing later.
+    func cancelEscalationCall(for session: Session) {
+        center.removePendingNotificationRequests(withIdentifiers: [callID(session)])
+    }
 
     private func parseTime(_ string: String) -> (hour: Int, minute: Int)? {
         let parts = string.split(separator: ":")

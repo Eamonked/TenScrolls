@@ -48,6 +48,7 @@ struct ProgressTabView: View {
                 heatmapCard
                 badgesCard
                 achievementsCard
+                appearanceSettings
                 sealShop
                 #if canImport(UIKit)
                 exportCard
@@ -244,6 +245,45 @@ struct ProgressTabView: View {
                                 Divider().background(Palette.ink3)
                             }
                         }
+                    }
+                }
+            }
+        }
+    }
+
+    private var appearanceSettings: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            SectionLabel(text: "Appearance")
+            CardView {
+                HStack(spacing: 12) {
+                    Image(systemName: store.state.appearanceMode == .light ? "sun.max.fill" : "moon.fill")
+                        .font(.system(size: 18))
+                        .foregroundColor(theme.brass)
+                    
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Theme Mode")
+                            .font(.system(size: 14, weight: .medium))
+                            .foregroundColor(Palette.text)
+                        Text(store.state.appearanceMode == .light ? "Light" : "Dark")
+                            .font(.system(size: 11))
+                            .foregroundColor(Palette.textDim)
+                    }
+                    
+                    Spacer()
+                    
+                    Button {
+                        withAnimation(.easeInOut(duration: 0.3)) {
+                            store.setAppearanceMode(store.state.appearanceMode == .dark ? .light : .dark)
+                        }
+                    } label: {
+                        Text("Switch")
+                            .font(AppFont.mono(10.5))
+                            .padding(.horizontal, 12)
+                            .padding(.vertical, 7)
+                            .background(Palette.ink2)
+                            .foregroundColor(theme.brass)
+                            .overlay(RoundedRectangle(cornerRadius: 8).stroke(Palette.inkLine, lineWidth: 1))
+                            .clipShape(RoundedRectangle(cornerRadius: 8))
                     }
                 }
             }

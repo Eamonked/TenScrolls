@@ -388,6 +388,25 @@ struct NotificationPrefs: Codable, Equatable {
     }
 }
 
+/// User-configurable reading window settings. Defines when each session is eligible
+/// to be marked as complete. Times are stored as "HH:mm" 24-hour strings.
+struct SessionWindowPrefs: Codable, Equatable {
+    var dawnStart: String = "05:00"
+    var dawnEnd: String = "11:00"
+    var middayStart: String = "11:00"
+    var middayEnd: String = "16:00"
+    var duskStart: String = "16:00"
+    var duskEnd: String = "23:00"
+    
+    func window(for session: Session) -> (start: String, end: String) {
+        switch session {
+        case .dawn: return (dawnStart, dawnEnd)
+        case .midday: return (middayStart, middayEnd)
+        case .dusk: return (duskStart, duskEnd)
+        }
+    }
+}
+
 /// A pending escalation shown as the full-screen incoming-call screen.
 struct PendingCall: Identifiable, Equatable {
     let id = UUID()
@@ -399,6 +418,7 @@ struct JournalEntry: Identifiable, Codable, Equatable {
     var date: String
     var scrollId: Int?
     var text: String
+    var isDraft: Bool = false
 }
 
 /// Tracks the rereading loop that begins once all ten scrolls are mastered.

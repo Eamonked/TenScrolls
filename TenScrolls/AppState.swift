@@ -9,6 +9,7 @@ struct AppState: Codable, Equatable {
     var shieldUsedDates: [String] = []
     var unlockedThemeIds: [String] = ["brass"]
     var activeThemeId: String = "brass"
+    var appearanceMode: AppearanceMode = .dark
     var traderCode: String
     var traderName: String = ""
     var friendCodes: [String] = []

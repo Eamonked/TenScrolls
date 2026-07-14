@@ -299,6 +299,16 @@ final class AppStore: ObservableObject {
 
         state.bestStreak = max(state.bestStreak, state.currentStreak)
         afterMutation()
+        
+        // Cancel the escalation call immediately when a session is completed
+        if !wasSet && entry[keyPath: session] {
+            if #available(iOS 26, *) {
+                Task { await AlarmScheduler.shared.handleStop(sessionId: sessionType.rawValue) }
+            } else {
+                notifier.cancelEscalationCall(for: sessionType)
+            }
+        }
+        
         syncNotifications() // completing a session cancels its pending escalation call
     }
 
@@ -409,7 +419,8 @@ final class AppStore: ObservableObject {
             id: "j\(Int(Date().timeIntervalSince1970 * 1000))",
             date: DateKey.today(),
             scrollId: state.activeScroll?.id,
-            text: text
+            text: text,
+            isDraft: false
         )
         state.journal.append(entry)
         afterMutation()
@@ -423,9 +434,41 @@ final class AppStore: ObservableObject {
             id: "j\(Int(Date().timeIntervalSince1970 * 1000))",
             date: DateKey.today(),
             scrollId: scrollId,
-            text: text
+            text: text,
+            isDraft: false
         )
         state.journal.append(entry)
+        afterMutation()
+    }
+
+    func addDraftEntry() {
+        let entry = JournalEntry(
+            id: "j\(Int(Date().timeIntervalSince1970 * 1000))",
+            date: DateKey.today(),
+            scrollId: state.activeScroll?.id,
+            text: "",
+            isDraft: true
+        )
+        state.journal.append(entry)
+        afterMutation()
+    }
+
+    func updateJournalEntry(_ id: String, text: String) {
+        guard let idx = state.journal.firstIndex(where: { $0.id == id }) else { return }
+        state.journal[idx].text = text
+        afterMutation()
+    }
+
+    func publishDraft(_ id: String) {
+        guard let idx = state.journal.firstIndex(where: { $0.id == id }) else { return }
+        state.journal[idx].isDraft = false
+        state.journal[idx].date = DateKey.today()
+        afterMutation()
+    }
+
+    func convertToDraft(_ id: String) {
+        guard let idx = state.journal.firstIndex(where: { $0.id == id }) else { return }
+        state.journal[idx].isDraft = true
         afterMutation()
     }
 
@@ -448,6 +491,11 @@ final class AppStore: ObservableObject {
 
     func equipTheme(_ id: String) {
         state.activeThemeId = id
+        afterMutation()
+    }
+
+    func setAppearanceMode(_ mode: AppearanceMode) {
+        state.appearanceMode = mode
         afterMutation()
     }
 

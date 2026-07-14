@@ -606,36 +606,6 @@ struct NotificationSettingsModal: View {
                     .disabled(!prefs.enabled)
                     .opacity(prefs.enabled ? 1 : 0.5)
 
-                    if prefs.enabled && isAuthorized {
-                        Button {
-                            if #available(iOS 26, *) {
-                                AlarmScheduler.shared.sendTest()
-                            } else {
-                                store.notifier.sendTest()
-                            }
-                        } label: {
-                            Label("Send test alarm", systemImage: "paperplane")
-                        }
-                        .buttonStyle(GhostButtonStyle())
-
-                        if prefs.callEnabled {
-                            Button {
-                                if #available(iOS 26, *) {
-                                    AlarmScheduler.shared.sendTestCall()
-                                } else {
-                                    store.notifier.sendTestCall()
-                                }
-                            } label: {
-                                Label("Test escalation call", systemImage: "phone.arrow.up.right")
-                            }
-                            .buttonStyle(GhostButtonStyle())
-                            Text("Fires in 5 seconds. Background the app or lock the screen, then tap the notification.")
-                                .font(.system(size: 11))
-                                .foregroundColor(Palette.textFaint)
-                                .padding(.horizontal, 4)
-                        }
-                    }
-
                     Color.clear.frame(height: 8)
                 }
                 .padding(20)
