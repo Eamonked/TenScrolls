@@ -15,6 +15,8 @@ struct AppState: Codable, Equatable {
     /// Optional so state persisted before this feature existed still decodes cleanly
     /// (a missing key becomes nil rather than throwing and wiping progress).
     var notifications: NotificationPrefs? = nil
+    /// Custom reading window times for each session. Optional for backward compatibility.
+    var sessionWindows: SessionWindowPrefs? = nil
     /// Reasons for missed days, keyed by date string ("yyyy-MM-dd").
     /// Stored separately from the log so days with zero sessions still get a reason.
     var missedDayReasons: [String: String]? = nil
@@ -25,6 +27,8 @@ struct AppState: Codable, Equatable {
 
     /// Reminder settings with sane defaults when none have been persisted yet.
     var notifPrefs: NotificationPrefs { notifications ?? NotificationPrefs() }
+    /// Reading window settings with defaults when none have been persisted yet.
+    var windowPrefs: SessionWindowPrefs { sessionWindows ?? SessionWindowPrefs() }
 
     static func defaultState() -> AppState {
         let scrolls = Constants.romans.enumerated().map { (i, r) in

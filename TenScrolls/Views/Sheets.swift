@@ -542,6 +542,40 @@ struct NotificationSettingsModal: View {
                     .disabled(!prefs.enabled)
                     .opacity(prefs.enabled ? 1 : 0.5)
 
+                    // Reading windows
+                    SectionLabel(text: "Reading Windows")
+                    Text("Set when each session can be marked as complete. These windows control eligibility, separate from reminder times.")
+                        .font(.system(size: 12)).foregroundColor(Palette.textDim)
+                    CardView {
+                        windowRow(session: .dawn)
+                        Divider().background(Palette.ink3)
+                        windowRow(session: .midday)
+                        Divider().background(Palette.ink3)
+                        windowRow(session: .dusk)
+                        
+                        if hasInvalidWindows {
+                            Divider().background(Palette.ink3).padding(.vertical, 10)
+                            Label("One or more windows have invalid times. They'll use defaults until fixed.",
+                                  systemImage: "exclamationmark.triangle")
+                                .font(.system(size: 12)).foregroundColor(Palette.textDim)
+                        }
+                    }
+                    
+                    Button {
+                        updateWindowPrefs { prefs in
+                            prefs.dawnStart = "05:00"
+                            prefs.dawnEnd = "11:00"
+                            prefs.middayStart = "11:00"
+                            prefs.middayEnd = "16:00"
+                            prefs.duskStart = "16:00"
+                            prefs.duskEnd = "23:00"
+                        }
+                    } label: {
+                        Label("Reset to defaults", systemImage: "arrow.counterclockwise")
+                    }
+                    .buttonStyle(GhostButtonStyle())
+                    .font(.system(size: 13))
+
                     // Escalation call
                     SectionLabel(text: "Escalation Call")
                     CardView {
@@ -659,11 +693,75 @@ struct NotificationSettingsModal: View {
         .padding(.vertical, 6)
     }
 
+    private func windowRow(session: Session) -> some View {
+        let windowPrefs = store.state.windowPrefs
+        let (startTime, endTime) = windowPrefs.window(for: session)
+        
+        return VStack(spacing: 8) {
+            HStack {
+                Label(session.label, systemImage: session.systemImage)
+                    .font(.system(size: 14))
+                    .foregroundColor(Palette.text)
+                Spacer()
+            }
+            
+            HStack(spacing: 12) {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Opens").font(.system(size: 11)).foregroundColor(Palette.textFaint)
+                    DatePicker("", selection: Binding(
+                        get: { dateFromHHmm(startTime) },
+                        set: { newDate in updateWindow(session: session, start: hhmm(from: newDate), end: endTime) }
+                    ), displayedComponents: .hourAndMinute)
+                    .labelsHidden()
+                }
+                
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Closes").font(.system(size: 11)).foregroundColor(Palette.textFaint)
+                    DatePicker("", selection: Binding(
+                        get: { dateFromHHmm(endTime) },
+                        set: { newDate in updateWindow(session: session, start: startTime, end: hhmm(from: newDate)) }
+                    ), displayedComponents: .hourAndMinute)
+                    .labelsHidden()
+                }
+            }
+        }
+        .padding(.vertical, 6)
+    }
+    
+    private var hasInvalidWindows: Bool {
+        let prefs = store.state.windowPrefs
+        return SessionTimeWindow.parse(start: prefs.dawnStart, end: prefs.dawnEnd) == nil ||
+               SessionTimeWindow.parse(start: prefs.middayStart, end: prefs.middayEnd) == nil ||
+               SessionTimeWindow.parse(start: prefs.duskStart, end: prefs.duskEnd) == nil
+    }
+
     /// Applies a mutation to the current prefs and persists + reschedules.
     private func update(_ mutate: (inout NotificationPrefs) -> Void) {
         var p = store.state.notifPrefs
         mutate(&p)
         store.updateNotifPrefs(p)
+    }
+    
+    private func updateWindow(session: Session, start: String, end: String) {
+        updateWindowPrefs { prefs in
+            switch session {
+            case .dawn:
+                prefs.dawnStart = start
+                prefs.dawnEnd = end
+            case .midday:
+                prefs.middayStart = start
+                prefs.middayEnd = end
+            case .dusk:
+                prefs.duskStart = start
+                prefs.duskEnd = end
+            }
+        }
+    }
+    
+    private func updateWindowPrefs(_ mutate: (inout SessionWindowPrefs) -> Void) {
+        var p = store.state.windowPrefs
+        mutate(&p)
+        store.updateWindowPrefs(p)
     }
 }
 

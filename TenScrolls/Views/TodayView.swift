@@ -153,6 +153,7 @@ struct TodayView: View {
     private var stamps: some View {
         let key = DateKey.today()
         let entry = store.state.log[key] ?? DayEntry(scrollId: store.state.targetScrollId ?? 0)
+        let customPrefs = store.state.windowPrefs
         return HStack(spacing: 12) {
             StampButton(
                 label: "DAWN",
@@ -160,7 +161,7 @@ struct TodayView: View {
                 done: entry.dawn,
                 brass: theme.brass,
                 glow: theme.glow,
-                windowStatus: Session.dawn.windowStatus(startedAt: entry.dawnStartedAt)
+                windowStatus: Session.dawn.windowStatus(startedAt: entry.dawnStartedAt, customPrefs: customPrefs)
             ) {
                 let wasDone = entry.dawn
                 store.toggleSession(\.dawn)
@@ -172,7 +173,7 @@ struct TodayView: View {
                 done: entry.midday,
                 brass: theme.brass,
                 glow: theme.glow,
-                windowStatus: Session.midday.windowStatus(startedAt: entry.middayStartedAt)
+                windowStatus: Session.midday.windowStatus(startedAt: entry.middayStartedAt, customPrefs: customPrefs)
             ) {
                 let wasDone = entry.midday
                 store.toggleSession(\.midday)
@@ -184,7 +185,7 @@ struct TodayView: View {
                 done: entry.dusk,
                 brass: theme.brass,
                 glow: theme.glow,
-                windowStatus: Session.dusk.windowStatus(startedAt: entry.duskStartedAt)
+                windowStatus: Session.dusk.windowStatus(startedAt: entry.duskStartedAt, customPrefs: customPrefs)
             ) {
                 let wasDone = entry.dusk
                 store.toggleSession(\.dusk)

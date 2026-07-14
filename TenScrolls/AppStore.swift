@@ -73,6 +73,11 @@ final class AppStore: ObservableObject {
         syncNotifications()
     }
 
+    func updateWindowPrefs(_ prefs: SessionWindowPrefs) {
+        state.sessionWindows = prefs
+        afterMutation()
+    }
+
     /// Toggles reminders, requesting system permission first when turning them on.
     func setNotificationsEnabled(_ enabled: Bool) async {
         if enabled {
@@ -202,7 +207,8 @@ final class AppStore: ObservableObject {
     /// (possibly after the window has rolled over) can still land. See
     /// `Session.isMarkable`.
     func recordReadingStarted(at date: Date = Date()) {
-        guard let eligible = Session.allCases.first(where: { $0.isEligible(at: date) }) else { return }
+        let customPrefs = state.windowPrefs
+        guard let eligible = Session.allCases.first(where: { $0.isEligible(at: date, customPrefs: customPrefs) }) else { return }
         guard let targetId = state.targetScrollId else { return }
         let key = DateKey.today()
         var entry = state.log[key] ?? DayEntry(scrollId: targetId)
@@ -234,11 +240,12 @@ final class AppStore: ObservableObject {
         // grace period covers the gap between finishing the read and tapping the
         // stamp, so a completed read isn't punished by unrelated UI lag.
         let currentTime = Date()
-        if !sessionType.isMarkable(at: currentTime, startedAt: entry.startedAt(for: sessionType)) {
-            let status = sessionType.windowStatus(at: currentTime)
+        let customPrefs = state.windowPrefs
+        if !sessionType.isMarkable(at: currentTime, startedAt: entry.startedAt(for: sessionType), customPrefs: customPrefs) {
+            let status = sessionType.windowStatus(at: currentTime, customPrefs: customPrefs)
             switch status {
             case .upcoming:
-                showToast("\(sessionType.label) opens at \(sessionType.timeWindow.displayRange)")
+                showToast("\(sessionType.label) opens at \(sessionType.timeWindow(customPrefs: customPrefs).displayRange)")
             case .closed:
                 showToast("\(sessionType.label) window has closed for today")
             case .open, .grace:

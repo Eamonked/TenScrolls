@@ -184,8 +184,16 @@ enum Session: String, Codable, CaseIterable, Identifiable {
         }
     }
     
-    /// Time window for this session (in local time)
-    var timeWindow: SessionTimeWindow {
+    /// Time window for this session (in local time). Accepts optional custom preferences;
+    /// falls back to hardcoded defaults when nil.
+    func timeWindow(customPrefs: SessionWindowPrefs? = nil) -> SessionTimeWindow {
+        if let prefs = customPrefs {
+            let (start, end) = prefs.window(for: self)
+            if let window = SessionTimeWindow.parse(start: start, end: end) {
+                return window
+            }
+        }
+        // Fallback to defaults
         switch self {
         case .dawn: return SessionTimeWindow(start: (5, 0), end: (11, 0))
         case .midday: return SessionTimeWindow(start: (11, 0), end: (16, 0))
@@ -194,8 +202,8 @@ enum Session: String, Codable, CaseIterable, Identifiable {
     }
     
     /// Check if this session is currently within its eligible time window
-    func isEligible(at date: Date = Date()) -> Bool {
-        timeWindow.contains(date)
+    func isEligible(at date: Date = Date(), customPrefs: SessionWindowPrefs? = nil) -> Bool {
+        timeWindow(customPrefs: customPrefs).contains(date)
     }
 
     /// How long after a window closes a session can still be stamped, provided the
@@ -210,18 +218,20 @@ enum Session: String, Codable, CaseIterable, Identifiable {
     /// timestamp captured when the reader opened the scroll — and allows a bounded
     /// grace period past the window's close, but only if that engagement itself
     /// happened inside the window.
-    func isMarkable(at now: Date = Date(), startedAt: Date?) -> Bool {
-        if timeWindow.contains(now) { return true }
-        guard let startedAt, timeWindow.contains(startedAt) else { return false }
-        let graceDeadline = timeWindow.endDate(anchoredTo: now).addingTimeInterval(TimeInterval(Session.markGraceMinutes * 60))
+    func isMarkable(at now: Date = Date(), startedAt: Date?, customPrefs: SessionWindowPrefs? = nil) -> Bool {
+        let window = timeWindow(customPrefs: customPrefs)
+        if window.contains(now) { return true }
+        guard let startedAt, window.contains(startedAt) else { return false }
+        let graceDeadline = window.endDate(anchoredTo: now).addingTimeInterval(TimeInterval(Session.markGraceMinutes * 60))
         return now <= graceDeadline
     }
     
     /// Window status for UI display
-    func windowStatus(at date: Date = Date()) -> SessionWindowStatus {
-        if timeWindow.contains(date) {
+    func windowStatus(at date: Date = Date(), customPrefs: SessionWindowPrefs? = nil) -> SessionWindowStatus {
+        let window = timeWindow(customPrefs: customPrefs)
+        if window.contains(date) {
             return .open
-        } else if timeWindow.isPast(date) {
+        } else if window.isPast(date) {
             return .closed
         } else {
             return .upcoming
@@ -231,10 +241,10 @@ enum Session: String, Codable, CaseIterable, Identifiable {
     /// Window status for UI display, aware of a recorded reading-start anchor.
     /// Use this wherever a stamp button reflects `isMarkable`, so the label never
     /// says "closed" for a session the reader can still tap.
-    func windowStatus(at date: Date = Date(), startedAt: Date?) -> SessionWindowStatus {
-        let base = windowStatus(at: date)
+    func windowStatus(at date: Date = Date(), startedAt: Date?, customPrefs: SessionWindowPrefs? = nil) -> SessionWindowStatus {
+        let base = windowStatus(at: date, customPrefs: customPrefs)
         guard base == .closed else { return base }
-        return isMarkable(at: date, startedAt: startedAt) ? .grace : .closed
+        return isMarkable(at: date, startedAt: startedAt, customPrefs: customPrefs) ? .grace : .closed
     }
 }
 
@@ -242,6 +252,30 @@ enum Session: String, Codable, CaseIterable, Identifiable {
 struct SessionTimeWindow {
     let start: (hour: Int, minute: Int)
     let end: (hour: Int, minute: Int)
+    
+    /// Parse "HH:mm" strings into a SessionTimeWindow. Returns nil if parsing fails
+    /// or if the time range is invalid (end before start).
+    static func parse(start: String, end: String) -> SessionTimeWindow? {
+        let startParts = start.split(separator: ":")
+        let endParts = end.split(separator: ":")
+        
+        guard startParts.count == 2, endParts.count == 2,
+              let startHour = Int(startParts[0]), let startMin = Int(startParts[1]),
+              let endHour = Int(endParts[0]), let endMin = Int(endParts[1]),
+              startHour >= 0, startHour < 24, startMin >= 0, startMin < 60,
+              endHour >= 0, endHour < 24, endMin >= 0, endMin < 60 else {
+            return nil
+        }
+        
+        let startMinutes = startHour * 60 + startMin
+        let endMinutes = endHour * 60 + endMin
+        guard endMinutes > startMinutes else { return nil }
+        
+        return SessionTimeWindow(
+            start: (startHour, startMin),
+            end: (endHour, endMin)
+        )
+    }
     
     func contains(_ date: Date) -> Bool {
         let calendar = Calendar.current
