@@ -23,9 +23,17 @@ final class AppStore: ObservableObject {
 
     init() {
         let loadedState: AppState
-        if let data = UserDefaults.standard.data(forKey: defaultsKey),
-           let decoded = try? JSONDecoder().decode(AppState.self, from: data) {
-            loadedState = decoded
+        if let data = UserDefaults.standard.data(forKey: defaultsKey) {
+            do {
+                loadedState = try JSONDecoder().decode(AppState.self, from: data)
+            } catch {
+                // Saved data exists but failed to decode — this should never silently
+                // wipe progress. Keep the raw bytes under a recovery key so they aren't
+                // lost, and surface the failure instead of guessing it's a fresh install.
+                UserDefaults.standard.set(data, forKey: defaultsKey + ".recovery")
+                assertionFailure("Failed to decode saved AppState, preserved raw data under '\(defaultsKey).recovery': \(error)")
+                loadedState = AppState.defaultState()
+            }
         } else {
             loadedState = AppState.defaultState()
         }
@@ -138,6 +146,27 @@ final class AppStore: ObservableObject {
             lastUpdated: Date()
         )
         WidgetData.save(wData)
+        
+        // Export journal data for journal widget
+        let journalEntries = state.journal
+            .filter { !$0.isDraft && !$0.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+            .prefix(50) // Limit to most recent 50 entries to keep widget data size reasonable
+            .map { entry -> JournalWidgetData.JournalWidgetEntry in
+                let scroll = state.scrolls.first { $0.id == entry.scrollId }
+                return JournalWidgetData.JournalWidgetEntry(
+                    id: entry.id,
+                    text: entry.text,
+                    date: DateKey.short(entry.date),
+                    scrollRoman: scroll?.roman
+                )
+            }
+        
+        let journalData = JournalWidgetData(
+            entries: Array(journalEntries),
+            themeId: themeId,
+            lastUpdated: Date()
+        )
+        JournalWidgetData.save(journalData)
         
         DispatchQueue.global(qos: .background).async {
             if let data = stateData {
@@ -402,6 +431,32 @@ final class AppStore: ObservableObject {
     func saveScroll(_ updated: Scroll) {
         guard let idx = state.scrolls.firstIndex(where: { $0.id == updated.id }) else { return }
         state.scrolls[idx] = updated
+        afterMutation()
+    }
+
+    /// Imports plain text into a single scroll's notes, replacing whatever
+    /// was there. The title is only filled in when the scroll doesn't
+    /// already have one, so this never clobbers a title the user wrote.
+    func importDocument(text: String, title: String?, intoScrollId scrollId: Int) {
+        guard let idx = state.scrolls.firstIndex(where: { $0.id == scrollId }) else { return }
+        var scroll = state.scrolls[idx]
+        scroll.notes = Scroll.normalizedNotes(text)
+        if scroll.title.isEmpty, let title, !title.isEmpty {
+            scroll.title = title
+        }
+        state.scrolls[idx] = scroll
+        afterMutation()
+    }
+
+    /// Spreads `chunks` across all ten scrolls in order — `chunks[0]` -> Scroll I,
+    /// `chunks[1]` -> Scroll II, and so on. `chunks` must already be split into
+    /// exactly ten pieces (see `DocumentSplitter.distribute`).
+    func importDocumentAcrossAllScrolls(_ chunks: [String]) {
+        let ordered = state.scrolls.sorted { $0.id < $1.id }
+        for (scroll, chunk) in zip(ordered, chunks) where !chunk.isEmpty {
+            guard let idx = state.scrolls.firstIndex(where: { $0.id == scroll.id }) else { continue }
+            state.scrolls[idx].notes = Scroll.normalizedNotes(chunk)
+        }
         afterMutation()
     }
 

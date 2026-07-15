@@ -9,7 +9,9 @@ struct AppState: Codable, Equatable {
     var shieldUsedDates: [String] = []
     var unlockedThemeIds: [String] = ["brass"]
     var activeThemeId: String = "brass"
-    var appearanceMode: AppearanceMode = .dark
+    /// Optional so state persisted before this feature existed still decodes cleanly
+    /// (a missing key becomes nil rather than throwing and wiping progress).
+    var storedAppearanceMode: AppearanceMode? = nil
     var traderCode: String
     var traderName: String = ""
     var friendCodes: [String] = []
@@ -30,6 +32,11 @@ struct AppState: Codable, Equatable {
     var notifPrefs: NotificationPrefs { notifications ?? NotificationPrefs() }
     /// Reading window settings with defaults when none have been persisted yet.
     var windowPrefs: SessionWindowPrefs { sessionWindows ?? SessionWindowPrefs() }
+    /// Appearance mode with a sane default for state persisted before this feature existed.
+    var appearanceMode: AppearanceMode {
+        get { storedAppearanceMode ?? .dark }
+        set { storedAppearanceMode = newValue }
+    }
 
     static func defaultState() -> AppState {
         let scrolls = Constants.romans.enumerated().map { (i, r) in

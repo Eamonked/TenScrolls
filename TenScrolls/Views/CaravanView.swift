@@ -8,6 +8,7 @@ import AppKit
 
 struct CaravanView: View {
     @EnvironmentObject var store: AppStore
+    @Environment(\.appearanceMode) var appearanceMode
 
     @State private var editingName = false
     @State private var nameDraft = ""
@@ -33,14 +34,15 @@ struct CaravanView: View {
     }
 
     var body: some View {
+        let colors = AdaptivePalette(mode: appearanceMode)
         ScrollView {
             VStack(alignment: .leading, spacing: 10) {
                 VStack(alignment: .leading, spacing: 4) {
                     Text("FELLOW TRADERS").font(AppFont.mono(11)).tracking(1.4).foregroundColor(theme.brass)
-                    Text("The Caravan").font(AppFont.display(28)).foregroundColor(Palette.text)
+                    Text("The Caravan").font(AppFont.display(28)).foregroundColor(colors.text)
                 }
                 Text("Set a trader handle to appear on the shared leaderboard, then add friends by their trader code to compare streaks and send encouragement.")
-                    .font(.system(size: 13)).foregroundColor(Palette.textDim)
+                    .font(.system(size: 13)).foregroundColor(colors.textDim)
                     .padding(.bottom, 6)
 
                 identityCard
@@ -53,7 +55,7 @@ struct CaravanView: View {
             .padding(.horizontal, 20)
             .padding(.top, 10)
         }
-        .background(Palette.background)
+        .background(colors.background)
         .task(id: "\(store.state.friendCodes.joined())-\(store.state.traderCode)") {
             await loadCircle()
         }
@@ -65,8 +67,9 @@ struct CaravanView: View {
     // MARK: - Identity
 
     private var identityCard: some View {
-        CardView {
-            Text("YOUR MARK").font(AppFont.mono(10)).tracking(1.4).foregroundColor(Palette.textFaint)
+        let colors = AdaptivePalette(mode: appearanceMode)
+        return CardView {
+            Text("YOUR MARK").font(AppFont.mono(10)).tracking(1.4).foregroundColor(colors.textFaint)
                 .padding(.bottom, 8)
 
             if editingName {
@@ -86,17 +89,17 @@ struct CaravanView: View {
                         .overlay(Text(String(store.state.traderName.prefix(1)).uppercased()).font(AppFont.display(17, weight: .bold)).foregroundColor(Color(hex: "1A1207")))
                     VStack(alignment: .leading, spacing: 3) {
                         HStack(spacing: 7) {
-                            Text(store.state.traderName).font(AppFont.display(19)).foregroundColor(Palette.text)
+                            Text(store.state.traderName).font(AppFont.display(19)).foregroundColor(colors.text)
                             Button {
                                 nameDraft = store.state.traderName
                                 editingName = true
                             } label: {
-                                Image(systemName: "pencil").font(.system(size: 12)).foregroundColor(Palette.textFaint)
+                                Image(systemName: "pencil").font(.system(size: 12)).foregroundColor(colors.textFaint)
                             }
                             .buttonStyle(.plain)
                         }
                         Text("Level \(myLevel) · \(myStreak)d streak · \(cheersReceived) cheer\(cheersReceived == 1 ? "" : "s") received")
-                            .font(AppFont.mono(11)).foregroundColor(Palette.textFaint)
+                            .font(AppFont.mono(11)).foregroundColor(colors.textFaint)
                     }
                     Spacer()
                 }
@@ -118,13 +121,13 @@ struct CaravanView: View {
                     DispatchQueue.main.asyncAfter(deadline: .now() + 1.8) { copied = false }
                 } label: {
                     Image(systemName: copied ? "checkmark" : "doc.on.doc")
-                        .foregroundColor(copied ? Palette.green : Palette.textDim)
+                        .foregroundColor(copied ? colors.green : colors.textDim)
                 }
                 .buttonStyle(.plain)
             }
             .padding(.horizontal, 12).padding(.vertical, 9)
-            .background(Palette.ink3)
-            .overlay(RoundedRectangle(cornerRadius: 10).stroke(Palette.inkLine, lineWidth: 1))
+            .background(colors.ink3)
+            .overlay(RoundedRectangle(cornerRadius: 10).stroke(colors.inkLine, lineWidth: 1))
             .clipShape(RoundedRectangle(cornerRadius: 10))
             .padding(.top, 12)
         }
@@ -140,7 +143,8 @@ struct CaravanView: View {
     // MARK: - Add friend
 
     private var addFriendCard: some View {
-        VStack(alignment: .leading, spacing: 0) {
+        let colors = AdaptivePalette(mode: appearanceMode)
+        return VStack(alignment: .leading, spacing: 0) {
             SectionLabel(text: "Add a Friend")
             CardView {
                 HStack(spacing: 8) {
@@ -154,16 +158,16 @@ struct CaravanView: View {
                         Image(systemName: "person.badge.plus")
                     }
                     .frame(width: 40, height: 40)
-                    .background(Palette.ink3)
+                    .background(colors.ink3)
                     .foregroundColor(theme.brass)
-                    .overlay(RoundedRectangle(cornerRadius: 10).stroke(Palette.inkLine, lineWidth: 1))
+                    .overlay(RoundedRectangle(cornerRadius: 10).stroke(colors.inkLine, lineWidth: 1))
                     .clipShape(RoundedRectangle(cornerRadius: 10))
                 }
                 if !friendError.isEmpty {
-                    Text(friendError).font(AppFont.mono(11)).foregroundColor(Palette.red).padding(.top, 8)
+                    Text(friendError).font(AppFont.mono(11)).foregroundColor(colors.red).padding(.top, 8)
                 }
                 Text("Share your own code above so they can add you back.")
-                    .font(AppFont.mono(11)).foregroundColor(Palette.textFaint)
+                    .font(AppFont.mono(11)).foregroundColor(colors.textFaint)
                     .padding(.top, friendError.isEmpty ? 8 : 4)
             }
         }
@@ -205,7 +209,8 @@ struct CaravanView: View {
     // MARK: - Leaderboard
 
     private var leaderboardSection: some View {
-        VStack(alignment: .leading, spacing: 0) {
+        let colors = AdaptivePalette(mode: appearanceMode)
+        return VStack(alignment: .leading, spacing: 0) {
             SectionLabel(text: "Leaderboard", trailing: sortedBoard.map { "\($0.count) traders" })
             CardView {
                 if sortedBoard == nil {
@@ -222,7 +227,7 @@ struct CaravanView: View {
                     }
                     if let myRankIndex, myRankIndex >= 20 {
                         Text("You're ranked #\(myRankIndex + 1) of \(sortedBoard!.count)")
-                            .font(AppFont.mono(11)).foregroundColor(Palette.textFaint).padding(.top, 8)
+                            .font(AppFont.mono(11)).foregroundColor(colors.textFaint).padding(.top, 8)
                     }
                 }
             }
@@ -258,6 +263,7 @@ struct CaravanView: View {
 }
 
 private struct DuelCard: View {
+    @Environment(\.appearanceMode) var appearanceMode
     let code: String
     let friend: FriendSnapshot?
     let myStreak: Int
@@ -267,16 +273,17 @@ private struct DuelCard: View {
     let onCheer: () async -> Void
 
     var body: some View {
+        let colors = AdaptivePalette(mode: appearanceMode)
         CardView {
             HStack {
                 VStack(alignment: .leading, spacing: 2) {
-                    Text(friend?.name ?? code).font(AppFont.display(15)).foregroundColor(Palette.text)
+                    Text(friend?.name ?? code).font(AppFont.display(15)).foregroundColor(colors.text)
                     Text(friend != nil ? "Level \(friend!.level) · \(code)" : "Hasn't set a handle yet")
-                        .font(AppFont.mono(11)).foregroundColor(Palette.textFaint)
+                        .font(AppFont.mono(11)).foregroundColor(colors.textFaint)
                 }
                 Spacer()
                 Button(action: onRemove) {
-                    Image(systemName: "trash").font(.system(size: 13)).foregroundColor(Palette.textFaint)
+                    Image(systemName: "trash").font(.system(size: 13)).foregroundColor(colors.textFaint)
                 }
                 .buttonStyle(.plain)
             }
@@ -289,26 +296,26 @@ private struct DuelCard: View {
                     VStack(spacing: 3) {
                         HStack(spacing: 5) { Image(systemName: "flame.fill"); Text("\(myStreak)") }
                             .font(AppFont.mono(19)).foregroundColor(theme.brass)
-                        Text("YOU").font(AppFont.mono(10)).foregroundColor(Palette.textFaint)
+                        Text("YOU").font(AppFont.mono(10)).foregroundColor(colors.textFaint)
                     }
                     .frame(maxWidth: .infinity)
-                    Text("vs").font(AppFont.display(12)).italic().foregroundColor(Palette.textFaint)
+                    Text("vs").font(AppFont.display(12)).italic().foregroundColor(colors.textFaint)
                     VStack(spacing: 3) {
                         HStack(spacing: 5) { Image(systemName: "flame.fill"); Text("\(friendStreak)") }
                             .font(AppFont.mono(19)).foregroundColor(theme.brass)
-                        Text(friend.name.uppercased()).font(AppFont.mono(10)).foregroundColor(Palette.textFaint)
+                        Text(friend.name.uppercased()).font(AppFont.mono(10)).foregroundColor(colors.textFaint)
                     }
                     .frame(maxWidth: .infinity)
                 }
                 Text(diff > 0 ? "You're \(diff) day\(diff == 1 ? "" : "s") ahead"
                      : diff == 0 ? "Dead even — first to blink loses"
                      : "\(abs(diff)) day\(abs(diff) == 1 ? "" : "s") behind — catch up")
-                    .font(.system(size: 11)).italic().foregroundColor(Palette.textDim)
+                    .font(.system(size: 11)).italic().foregroundColor(colors.textDim)
                     .frame(maxWidth: .infinity)
                     .padding(.top, 10)
             } else {
                 Text("They haven't set a trader handle yet, so no stats to compare.")
-                    .font(AppFont.mono(11)).foregroundColor(Palette.textFaint)
+                    .font(AppFont.mono(11)).foregroundColor(colors.textFaint)
             }
 
             Button {
@@ -320,7 +327,7 @@ private struct DuelCard: View {
             .disabled(friend == nil || cheerSent)
             .frame(maxWidth: .infinity)
             .padding(.vertical, 9)
-            .background(Palette.ink3)
+            .background(colors.ink3)
             .foregroundColor(theme.brass)
             .overlay(RoundedRectangle(cornerRadius: 10).stroke(theme.brassDim, lineWidth: 1))
             .clipShape(RoundedRectangle(cornerRadius: 10))
@@ -331,21 +338,24 @@ private struct DuelCard: View {
 }
 
 private struct LeaderRow: View {
+    @Environment(\.appearanceMode) var appearanceMode
     let rank: Int
     let entry: LeaderboardEntry
     let isSelf: Bool
     let theme: ThemeOption
 
     var rankColor: Color {
+        let colors = AdaptivePalette(mode: appearanceMode)
         switch rank {
         case 0: return Color(hex: "E8C27A")
         case 1: return Color(hex: "C7CCD4")
         case 2: return Color(hex: "C99A6B")
-        default: return Palette.textFaint
+        default: return colors.textFaint
         }
     }
 
     var body: some View {
+        let colors = AdaptivePalette(mode: appearanceMode)
         HStack(spacing: 12) {
             Group {
                 if rank == 0 {
@@ -360,10 +370,10 @@ private struct LeaderRow: View {
 
             VStack(alignment: .leading, spacing: 1) {
                 Text("\(entry.snapshot.name)\(isSelf ? " (you)" : "")")
-                    .font(.system(size: 13.5, weight: .semibold)).foregroundColor(Palette.text)
+                    .font(.system(size: 13.5, weight: .semibold)).foregroundColor(colors.text)
                     .lineLimit(1)
                 Text("\(entry.snapshot.streak)d streak · \(timeAgo(entry.snapshot.lastActive))")
-                    .font(AppFont.mono(10.5)).foregroundColor(Palette.textFaint)
+                    .font(AppFont.mono(10.5)).foregroundColor(colors.textFaint)
             }
             Spacer()
             HStack(spacing: 4) {

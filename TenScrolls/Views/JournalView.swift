@@ -2,6 +2,7 @@ import SwiftUI
 
 struct JournalView: View {
     @EnvironmentObject var store: AppStore
+    @Environment(\.appearanceMode) var appearanceMode
     var openJournal: () -> Void
     var openSearch: () -> Void
 
@@ -16,40 +17,41 @@ struct JournalView: View {
     }
 
     var body: some View {
+        let colors = AdaptivePalette(mode: appearanceMode)
         ScrollView {
             VStack(alignment: .leading, spacing: 10) {
                 HStack(alignment: .top) {
                     VStack(alignment: .leading, spacing: 4) {
                         Text("\(publishedEntries.count) ENTRIES").font(AppFont.mono(11)).tracking(1.4).foregroundColor(theme.brass)
-                        Text("Journal").font(AppFont.display(28)).foregroundColor(Palette.text)
+                        Text("Journal").font(AppFont.display(28)).foregroundColor(colors.text)
                     }
                     Spacer()
                     
                     HStack(spacing: 12) {
                         Button(action: openSearch) {
                             Image(systemName: "magnifyingglass")
-                                .foregroundColor(Palette.textDim)
+                                .foregroundColor(colors.textDim)
                                 .frame(width: 36, height: 36)
-                                .background(Circle().fill(Palette.ink2))
-                                .overlay(Circle().stroke(Palette.inkLine, lineWidth: 1))
+                                .background(Circle().fill(colors.ink2))
+                                .overlay(Circle().stroke(colors.inkLine, lineWidth: 1))
                         }
                         .buttonStyle(.plain)
                         
                         Button(action: openJournal) {
                             Image(systemName: "plus")
-                                .foregroundColor(Palette.textDim)
+                                .foregroundColor(colors.textDim)
                                 .frame(width: 36, height: 36)
-                                .background(Circle().fill(Palette.ink2))
-                                .overlay(Circle().stroke(Palette.inkLine, lineWidth: 1))
+                                .background(Circle().fill(colors.ink2))
+                                .overlay(Circle().stroke(colors.inkLine, lineWidth: 1))
                         }
                         .buttonStyle(.plain)
                         
                         Button(action: { store.addDraftEntry() }) {
                             Image(systemName: "square.and.pencil")
-                                .foregroundColor(Palette.textDim)
+                                .foregroundColor(colors.textDim)
                                 .frame(width: 36, height: 36)
-                                .background(Circle().fill(Palette.ink2))
-                                .overlay(Circle().stroke(Palette.inkLine, lineWidth: 1))
+                                .background(Circle().fill(colors.ink2))
+                                .overlay(Circle().stroke(colors.inkLine, lineWidth: 1))
                         }
                         .buttonStyle(.plain)
                     }
@@ -117,11 +119,12 @@ struct JournalView: View {
             .padding(.horizontal, 20)
             .padding(.top, 10)
         }
-        .background(Palette.background)
+        .background(colors.background)
     }
 }
 
 private struct DraftEntryRow: View {
+    @Environment(\.appearanceMode) var appearanceMode
     let entry: JournalEntry
     let scroll: Scroll?
     let onUpdate: (String) -> Void
@@ -141,11 +144,12 @@ private struct DraftEntryRow: View {
     }
 
     var body: some View {
+        let colors = AdaptivePalette(mode: appearanceMode)
         VStack(alignment: .leading, spacing: 8) {
             HStack {
                 Text("DRAFT · Scroll \(scroll?.roman ?? "—")")
                     .font(AppFont.mono(10.5))
-                    .foregroundColor(Palette.textFaint)
+                    .foregroundColor(colors.textFaint)
                 Spacer()
                 
                 HStack(spacing: 12) {
@@ -163,7 +167,7 @@ private struct DraftEntryRow: View {
                     Button(action: onDelete) {
                         Image(systemName: "trash")
                             .font(.system(size: 12))
-                            .foregroundColor(Palette.textFaint)
+                            .foregroundColor(colors.textFaint)
                     }
                     .buttonStyle(.plain)
                 }
@@ -171,9 +175,9 @@ private struct DraftEntryRow: View {
             
             TextEditor(text: $editedText)
                 .font(.system(size: 13.5))
-                .foregroundColor(Palette.text)
+                .foregroundColor(colors.text)
                 .scrollContentBackground(.hidden)
-                .background(Palette.ink2)
+                .background(colors.ink2)
                 .frame(minHeight: 80)
                 .focused($isFocused)
                 .onChange(of: editedText) { _, newValue in
@@ -186,13 +190,14 @@ private struct DraftEntryRow: View {
                 }
         }
         .padding(14)
-        .background(Palette.ink2)
+        .background(colors.ink2)
         .overlay(RoundedRectangle(cornerRadius: 14).stroke(Palette.theme(for: "default").brass.opacity(0.4), lineWidth: 1.5))
         .clipShape(RoundedRectangle(cornerRadius: 14))
     }
 }
 
 private struct JournalEntryRow: View {
+    @Environment(\.appearanceMode) var appearanceMode
     let entry: JournalEntry
     let scroll: Scroll?
     let onDelete: () -> Void
@@ -200,46 +205,45 @@ private struct JournalEntryRow: View {
     @State private var expanded = false
 
     var body: some View {
+        let colors = AdaptivePalette(mode: appearanceMode)
         VStack(alignment: .leading, spacing: 8) {
             HStack {
                 Text("\(DateKey.short(entry.date)) · Scroll \(scroll?.roman ?? "—")")
-                    .font(AppFont.mono(10.5)).foregroundColor(Palette.textFaint)
+                    .font(AppFont.mono(10.5)).foregroundColor(colors.textFaint)
                 Spacer()
                 if expanded {
                     Button(action: onDelete) {
-                        Image(systemName: "trash").font(.system(size: 12)).foregroundColor(Palette.textFaint)
+                        Image(systemName: "trash").font(.system(size: 12)).foregroundColor(colors.textFaint)
                     }
                     .buttonStyle(.plain)
                 }
                 Image(systemName: "chevron.down")
                     .font(.system(size: 10, weight: .semibold))
-                    .foregroundColor(Palette.textFaint)
+                    .foregroundColor(colors.textFaint)
                     .rotationEffect(.degrees(expanded ? 180 : 0))
             }
             Text(entry.text)
                 .font(.system(size: 13.5))
-                .foregroundColor(Palette.text)
+                .foregroundColor(colors.text)
                 .lineSpacing(4)
                 .lineLimit(expanded ? nil : 1)
                 .truncationMode(.tail)
         }
         .padding(14)
-        .background(Palette.ink2)
-        .overlay(RoundedRectangle(cornerRadius: 14).stroke(Palette.inkLine, lineWidth: 1))
+        .background(colors.ink2)
+        .overlay(RoundedRectangle(cornerRadius: 14).stroke(colors.inkLine, lineWidth: 1))
         .clipShape(RoundedRectangle(cornerRadius: 14))
         .contentShape(Rectangle())
         .onTapGesture {
             withAnimation(.easeInOut(duration: 0.2)) { expanded.toggle() }
         }
-        .swipeActions(edge: .leading, allowsFullSwipe: true) {
+        .contextMenu {
             Button {
                 onConvertToDraft()
             } label: {
                 Label("Edit", systemImage: "pencil")
             }
-            .tint(Palette.theme(for: "default").brass)
-        }
-        .swipeActions(edge: .trailing, allowsFullSwipe: false) {
+            
             Button(role: .destructive) {
                 onDelete()
             } label: {

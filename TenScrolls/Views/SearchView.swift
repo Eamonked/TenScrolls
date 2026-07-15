@@ -2,6 +2,7 @@ import SwiftUI
 
 struct SearchView: View {
     @EnvironmentObject var store: AppStore
+    @Environment(\.appearanceMode) var appearanceMode
     @Environment(\.dismiss) private var dismiss
     @State private var query: String = ""
     var onOpenScroll: (Scroll) -> Void
@@ -9,21 +10,22 @@ struct SearchView: View {
     var theme: ThemeOption { Palette.theme(for: store.state.activeThemeId) }
 
     var body: some View {
+        let colors = AdaptivePalette(mode: appearanceMode)
         NavigationStack {
             ZStack {
-                Palette.background.ignoresSafeArea()
+                colors.background.ignoresSafeArea()
                 
                 if query.isEmpty {
                     VStack(spacing: 12) {
                         Image(systemName: "magnifyingglass")
                             .font(.system(size: 40))
-                            .foregroundColor(Palette.ink3)
+                            .foregroundColor(colors.ink3)
                         Text("Search your reflections")
                             .font(AppFont.display(20))
-                            .foregroundColor(Palette.textDim)
+                            .foregroundColor(colors.textDim)
                         Text("Find thoughts across all your journal entries and scroll notes.")
                             .font(.system(size: 14))
-                            .foregroundColor(Palette.textFaint)
+                            .foregroundColor(colors.textFaint)
                             .multilineTextAlignment(.center)
                             .padding(.horizontal, 40)
                     }
@@ -35,7 +37,7 @@ struct SearchView: View {
                         if !journalMatches.isEmpty {
                             Section("Journal Entries") {
                                 ForEach(journalMatches) { entry in
-                                    JournalMatchRow(entry: entry, scroll: store.state.scrolls.first(where: { $0.id == entry.scrollId }))
+                                    JournalMatchRow(entry: entry, scroll: store.state.scrolls.first(where: { $0.id == entry.scrollId }), colors: colors)
                                 }
                             }
                         }
@@ -46,7 +48,7 @@ struct SearchView: View {
                                     Button {
                                         onOpenScroll(scroll)
                                     } label: {
-                                        ScrollMatchRow(scroll: scroll, themeOption: theme)
+                                        ScrollMatchRow(scroll: scroll, themeOption: theme, colors: colors)
                                     }
                                 }
                             }
@@ -54,7 +56,7 @@ struct SearchView: View {
                         
                         if journalMatches.isEmpty && scrollMatches.isEmpty {
                             Text("No matches found.")
-                                .foregroundColor(Palette.textFaint)
+                                .foregroundColor(colors.textFaint)
                                 .listRowBackground(Color.clear)
                         }
                     }
@@ -79,26 +81,28 @@ struct SearchView: View {
 private struct JournalMatchRow: View {
     let entry: JournalEntry
     let scroll: Scroll?
+    let colors: AdaptivePalette
     
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
             Text("\(DateKey.short(entry.date)) · Scroll \(scroll?.roman ?? "—")")
                 .font(AppFont.mono(10.5))
-                .foregroundColor(Palette.textFaint)
+                .foregroundColor(colors.textFaint)
             Text(entry.text)
                 .font(.system(size: 13.5))
-                .foregroundColor(Palette.text)
+                .foregroundColor(colors.text)
                 .lineLimit(5)
                 .lineSpacing(4)
         }
         .padding(.vertical, 4)
-        .listRowBackground(Palette.ink2)
+        .listRowBackground(colors.ink2)
     }
 }
 
 private struct ScrollMatchRow: View {
     let scroll: Scroll
     let themeOption: ThemeOption
+    let colors: AdaptivePalette
     
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
@@ -107,11 +111,11 @@ private struct ScrollMatchRow: View {
                 .foregroundColor(themeOption.brass.opacity(0.8))
             Text(scroll.notes)
                 .font(.system(size: 13.5))
-                .foregroundColor(Palette.text)
+                .foregroundColor(colors.text)
                 .lineLimit(3)
                 .lineSpacing(4)
         }
         .padding(.vertical, 4)
-        .listRowBackground(Palette.ink2)
+        .listRowBackground(colors.ink2)
     }
 }

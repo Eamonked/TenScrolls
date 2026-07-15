@@ -2,6 +2,8 @@ import WidgetKit
 import SwiftUI
 
 struct Provider: TimelineProvider {
+    typealias Entry = WidgetEntry
+    
     func placeholder(in context: Context) -> WidgetEntry {
         WidgetEntry(date: Date(), data: .placeholder)
     }
@@ -12,7 +14,7 @@ struct Provider: TimelineProvider {
         completion(entry)
     }
 
-    func getTimeline(in context: Context, completion: @escaping (Timeline<Entry>) -> Void) {
+    func getTimeline(in context: Context, completion: @escaping (Timeline<WidgetEntry>) -> Void) {
         let data = WidgetData.load() ?? .placeholder
         let entry = WidgetEntry(date: Date(), data: data)
         // Refresh periodically just in case, but rely mostly on the main app triggering reloads

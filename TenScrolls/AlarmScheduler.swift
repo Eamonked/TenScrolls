@@ -217,6 +217,11 @@ final class AlarmScheduler: ObservableObject {
     /// A second, later alarm that only fires if the first one's stop button
     /// was never tapped. We schedule it eagerly alongside the main alarm and
     /// cancel it from `handleStop` if the user responds in time.
+    ///
+    /// IMPORTANT: This uses an absolute (one-time) schedule, not a repeating one.
+    /// The escalation is meant to fire only once per day, specific to today's
+    /// session. A repeating schedule would cause it to ring every day at that time,
+    /// creating unwanted alarms.
     @discardableResult
     private func scheduleEscalationCall(for session: Session, hhmm: String, afterMinutes: Int) async throws -> UUID {
         let (hour, minute) = Self.parse(hhmm)
@@ -225,10 +230,9 @@ final class AlarmScheduler: ObservableObject {
         comps.minute = minute
         let base = Calendar.current.nextDate(after: Date(), matching: comps, matchingPolicy: .nextTime) ?? Date()
         let escalated = base.addingTimeInterval(TimeInterval(afterMinutes * 60))
-        let escalatedComps = Calendar.current.dateComponents([.hour, .minute], from: escalated)
 
-        let time = Alarm.Schedule.Relative.Time(hour: escalatedComps.hour ?? hour, minute: escalatedComps.minute ?? minute)
-        let schedule = Alarm.Schedule.Relative(time: time, repeats: Self.everyDay)
+        // Use absolute schedule (one-time) instead of relative (repeating)
+        let schedule = Alarm.Schedule.Absolute(date: escalated)
 
         let openButton = AlarmButton(text: "Open the app", textColor: .black, systemImageName: "arrow.right")
 
@@ -253,7 +257,7 @@ final class AlarmScheduler: ObservableObject {
         _ = try await AlarmManager.shared.schedule(
             id: id,
             configuration: .init(
-                schedule: .relative(schedule),
+                schedule: .absolute(schedule),
                 attributes: attributes,
                 stopIntent: stopIntent,
                 secondaryIntent: openIntent

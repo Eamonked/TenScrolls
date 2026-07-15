@@ -5,6 +5,7 @@ import AudioToolbox
 /// its timeout. Rings + vibrates on a repeating timer while visible; Accept lands the
 /// user back in the app, Decline just dismisses.
 struct IncomingCallView: View {
+    @Environment(\.appearanceMode) var appearanceMode
     let session: Session
     var onAccept: () -> Void
     var onDecline: () -> Void
@@ -13,7 +14,9 @@ struct IncomingCallView: View {
     @State private var pulse = false
 
     var body: some View {
+        let colors = AdaptivePalette(mode: appearanceMode)
         ZStack {
+            // Use fixed dark gradient for call screen regardless of theme
             LinearGradient(
                 colors: [Color(hex: "0B0F14"), Color(hex: "05070A")],
                 startPoint: .top, endPoint: .bottom
@@ -26,11 +29,11 @@ struct IncomingCallView: View {
                 Text("Ten Scrolls")
                     .font(AppFont.mono(13))
                     .tracking(2)
-                    .foregroundColor(Palette.textDim)
+                    .foregroundColor(Color(hex: "8F97A3"))
 
                 Text("incoming call")
                     .font(.system(size: 14))
-                    .foregroundColor(Palette.textFaint)
+                    .foregroundColor(Color(hex: "5B6270"))
                     .padding(.top, 4)
 
                 avatar
@@ -38,19 +41,19 @@ struct IncomingCallView: View {
 
                 Text("\(session.label) Reading")
                     .font(AppFont.display(26))
-                    .foregroundColor(Palette.text)
+                    .foregroundColor(Color(hex: "EDEAE2"))
                     .padding(.top, 26)
 
                 Text("Your \(session.label.lowercased()) session is still unfinished.")
                     .font(.system(size: 14))
-                    .foregroundColor(Palette.textDim)
+                    .foregroundColor(Color(hex: "8F97A3"))
                     .multilineTextAlignment(.center)
                     .padding(.horizontal, 40)
                     .padding(.top, 8)
 
                 Spacer()
 
-                controls
+                controls(colors: colors)
                     .padding(.bottom, 60)
             }
         }
@@ -84,13 +87,13 @@ struct IncomingCallView: View {
         }
     }
 
-    private var controls: some View {
+    private func controls(colors: AdaptivePalette) -> some View {
         HStack(spacing: 70) {
-            callButton(color: Palette.red, icon: "phone.down.fill", label: "Decline") {
+            callButton(color: colors.red, icon: "phone.down.fill", label: "Decline") {
                 stopRinging()
                 onDecline()
             }
-            callButton(color: Palette.green, icon: "phone.fill", label: "Accept") {
+            callButton(color: colors.green, icon: "phone.fill", label: "Accept") {
                 stopRinging()
                 onAccept()
             }
@@ -113,7 +116,7 @@ struct IncomingCallView: View {
             .buttonStyle(.plain)
             Text(label)
                 .font(.system(size: 13))
-                .foregroundColor(Palette.textDim)
+                .foregroundColor(Color(hex: "8F97A3"))
         }
     }
 

@@ -6,11 +6,51 @@
 	objectVersion = 77;
 	objects = {
 
+/* Begin PBXBuildFile section */
+		3E301C7A3007001600AE81CB /* WidgetKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 3E301C793007001600AE81CB /* WidgetKit.framework */; };
+		3E301C7C3007001600AE81CB /* SwiftUI.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 3E301C7B3007001600AE81CB /* SwiftUI.framework */; };
+		3E301C8B3007001800AE81CB /* TenScrollsWidgetExtension.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = 3E301C773007001500AE81CB /* TenScrollsWidgetExtension.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
+/* End PBXBuildFile section */
+
+/* Begin PBXContainerItemProxy section */
+		3E301C893007001800AE81CB /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 3EC8ED882FF8CD1700D12364 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 3E301C763007001500AE81CB;
+			remoteInfo = TenScrollsWidgetExtension;
+		};
+/* End PBXContainerItemProxy section */
+
+/* Begin PBXCopyFilesBuildPhase section */
+		3E301C903007001800AE81CB /* Embed Foundation Extensions */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = "";
+			dstSubfolderSpec = 13;
+			files = (
+				3E301C8B3007001800AE81CB /* TenScrollsWidgetExtension.appex in Embed Foundation Extensions */,
+			);
+			name = "Embed Foundation Extensions";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXCopyFilesBuildPhase section */
+
 /* Begin PBXFileReference section */
+		3E301C773007001500AE81CB /* TenScrollsWidgetExtension.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = TenScrollsWidgetExtension.appex; sourceTree = BUILT_PRODUCTS_DIR; };
+		3E301C793007001600AE81CB /* WidgetKit.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = WidgetKit.framework; path = System/Library/Frameworks/WidgetKit.framework; sourceTree = SDKROOT; };
+		3E301C7B3007001600AE81CB /* SwiftUI.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = SwiftUI.framework; path = System/Library/Frameworks/SwiftUI.framework; sourceTree = SDKROOT; };
 		3EC8ED902FF8CD1700D12364 /* TenScrolls.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = TenScrolls.app; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
+		3E301C8F3007001800AE81CB /* Exceptions for "TenScrollsWidget" folder in "TenScrollsWidgetExtension" target */ = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (
+				Info.plist,
+			);
+			target = 3E301C763007001500AE81CB /* TenScrollsWidgetExtension */;
+		};
 		3E7F917D3002BE490035035B /* Exceptions for "TenScrolls" folder in "TenScrolls" target */ = {
 			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
 			membershipExceptions = (
@@ -21,6 +61,14 @@
 /* End PBXFileSystemSynchronizedBuildFileExceptionSet section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
+		3E301C7D3007001600AE81CB /* TenScrollsWidget */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			exceptions = (
+				3E301C8F3007001800AE81CB /* Exceptions for "TenScrollsWidget" folder in "TenScrollsWidgetExtension" target */,
+			);
+			path = TenScrollsWidget;
+			sourceTree = "<group>";
+		};
 		3EC8ED922FF8CD1700D12364 /* TenScrolls */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
 			exceptions = (
@@ -32,6 +80,15 @@
 /* End PBXFileSystemSynchronizedRootGroup section */
 
 /* Begin PBXFrameworksBuildPhase section */
+		3E301C743007001500AE81CB /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				3E301C7C3007001600AE81CB /* SwiftUI.framework in Frameworks */,
+				3E301C7A3007001600AE81CB /* WidgetKit.framework in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 		3EC8ED8D2FF8CD1700D12364 /* Frameworks */ = {
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
@@ -42,10 +99,21 @@
 /* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
+		3E301C783007001600AE81CB /* Frameworks */ = {
+			isa = PBXGroup;
+			children = (
+				3E301C793007001600AE81CB /* WidgetKit.framework */,
+				3E301C7B3007001600AE81CB /* SwiftUI.framework */,
+			);
+			name = Frameworks;
+			sourceTree = "<group>";
+		};
 		3EC8ED872FF8CD1700D12364 = {
 			isa = PBXGroup;
 			children = (
 				3EC8ED922FF8CD1700D12364 /* TenScrolls */,
+				3E301C7D3007001600AE81CB /* TenScrollsWidget */,
+				3E301C783007001600AE81CB /* Frameworks */,
 				3EC8ED912FF8CD1700D12364 /* Products */,
 			);
 			sourceTree = "<group>";
@@ -54,6 +122,7 @@
 			isa = PBXGroup;
 			children = (
 				3EC8ED902FF8CD1700D12364 /* TenScrolls.app */,
+				3E301C773007001500AE81CB /* TenScrollsWidgetExtension.appex */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -61,6 +130,28 @@
 /* End PBXGroup section */
 
 /* Begin PBXNativeTarget section */
+		3E301C763007001500AE81CB /* TenScrollsWidgetExtension */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 3E301C8C3007001800AE81CB /* Build configuration list for PBXNativeTarget "TenScrollsWidgetExtension" */;
+			buildPhases = (
+				3E301C733007001500AE81CB /* Sources */,
+				3E301C743007001500AE81CB /* Frameworks */,
+				3E301C753007001500AE81CB /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			fileSystemSynchronizedGroups = (
+				3E301C7D3007001600AE81CB /* TenScrollsWidget */,
+			);
+			name = TenScrollsWidgetExtension;
+			packageProductDependencies = (
+			);
+			productName = TenScrollsWidgetExtension;
+			productReference = 3E301C773007001500AE81CB /* TenScrollsWidgetExtension.appex */;
+			productType = "com.apple.product-type.app-extension";
+		};
 		3EC8ED8F2FF8CD1700D12364 /* TenScrolls */ = {
 			isa = PBXNativeTarget;
 			buildConfigurationList = 3EC8ED9B2FF8CD1900D12364 /* Build configuration list for PBXNativeTarget "TenScrolls" */;
@@ -68,10 +159,12 @@
 				3EC8ED8C2FF8CD1700D12364 /* Sources */,
 				3EC8ED8D2FF8CD1700D12364 /* Frameworks */,
 				3EC8ED8E2FF8CD1700D12364 /* Resources */,
+				3E301C903007001800AE81CB /* Embed Foundation Extensions */,
 			);
 			buildRules = (
 			);
 			dependencies = (
+				3E301C8A3007001800AE81CB /* PBXTargetDependency */,
 			);
 			fileSystemSynchronizedGroups = (
 				3EC8ED922FF8CD1700D12364 /* TenScrolls */,
@@ -93,6 +186,9 @@
 				LastSwiftUpdateCheck = 2660;
 				LastUpgradeCheck = 2660;
 				TargetAttributes = {
+					3E301C763007001500AE81CB = {
+						CreatedOnToolsVersion = 26.6;
+					};
 					3EC8ED8F2FF8CD1700D12364 = {
 						CreatedOnToolsVersion = 26.6;
 					};
@@ -113,11 +209,19 @@
 			projectRoot = "";
 			targets = (
 				3EC8ED8F2FF8CD1700D12364 /* TenScrolls */,
+				3E301C763007001500AE81CB /* TenScrollsWidgetExtension */,
 			);
 		};
 /* End PBXProject section */
 
 /* Begin PBXResourcesBuildPhase section */
+		3E301C753007001500AE81CB /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 		3EC8ED8E2FF8CD1700D12364 /* Resources */ = {
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
@@ -128,6 +232,13 @@
 /* End PBXResourcesBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
+		3E301C733007001500AE81CB /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 		3EC8ED8C2FF8CD1700D12364 /* Sources */ = {
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
@@ -137,7 +248,80 @@
 		};
 /* End PBXSourcesBuildPhase section */
 
+/* Begin PBXTargetDependency section */
+		3E301C8A3007001800AE81CB /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 3E301C763007001500AE81CB /* TenScrollsWidgetExtension */;
+			targetProxy = 3E301C893007001800AE81CB /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
+
 /* Begin XCBuildConfiguration section */
+		3E301C8D3007001800AE81CB /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				ASSETCATALOG_COMPILER_WIDGET_BACKGROUND_COLOR_NAME = WidgetBackground;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = 66KU6QPFZL;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = TenScrollsWidget/Info.plist;
+				INFOPLIST_KEY_CFBundleDisplayName = TenScrollsWidget;
+				INFOPLIST_KEY_NSHumanReadableCopyright = "";
+				IPHONEOS_DEPLOYMENT_TARGET = 26.5;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = ekme.TenScrolls.TenScrollsWidget;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SKIP_INSTALL = YES;
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Debug;
+		};
+		3E301C8E3007001800AE81CB /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				ASSETCATALOG_COMPILER_WIDGET_BACKGROUND_COLOR_NAME = WidgetBackground;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = 66KU6QPFZL;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = TenScrollsWidget/Info.plist;
+				INFOPLIST_KEY_CFBundleDisplayName = TenScrollsWidget;
+				INFOPLIST_KEY_NSHumanReadableCopyright = "";
+				IPHONEOS_DEPLOYMENT_TARGET = 26.5;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = ekme.TenScrolls.TenScrollsWidget;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SKIP_INSTALL = YES;
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				VALIDATE_PRODUCT = YES;
+			};
+			name = Release;
+		};
 		3EC8ED992FF8CD1900D12364 /* Debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
@@ -349,6 +533,15 @@
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
+		3E301C8C3007001800AE81CB /* Build configuration list for PBXNativeTarget "TenScrollsWidgetExtension" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				3E301C8D3007001800AE81CB /* Debug */,
+				3E301C8E3007001800AE81CB /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
 		3EC8ED8B2FF8CD1700D12364 /* Build configuration list for PBXProject "TenScrolls" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (

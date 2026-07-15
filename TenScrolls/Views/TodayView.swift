@@ -2,6 +2,7 @@ import SwiftUI
 
 struct TodayView: View {
     @EnvironmentObject var store: AppStore
+    @Environment(\.appearanceMode) var appearanceMode
     var openJournal: () -> Void
     var openInfo: () -> Void
     var openNotifSettings: () -> Void
@@ -12,6 +13,7 @@ struct TodayView: View {
     var theme: ThemeOption { Palette.theme(for: store.state.activeThemeId) }
 
     var body: some View {
+        let colors = AdaptivePalette(mode: appearanceMode)
         ScrollView {
             VStack(alignment: .leading, spacing: 14) {
                 header
@@ -40,18 +42,19 @@ struct TodayView: View {
             .padding(.horizontal, 20)
             .padding(.top, 10)
         }
-        .background(Palette.background)
+        .background(colors.background)
     }
 
     private var header: some View {
-        HStack(alignment: .top) {
+        let colors = AdaptivePalette(mode: appearanceMode)
+        return HStack(alignment: .top) {
             VStack(alignment: .leading, spacing: 4) {
                 Text("DAY \(min(store.state.totalDaysCompleted + 1, 300)) OF 300")
                     .font(AppFont.mono(11))
                     .tracking(1.4)
                     .foregroundColor(theme.brass)
                 Text("Today").font(AppFont.display(28))
-                    .foregroundColor(Palette.text)
+                    .foregroundColor(colors.text)
             }
             Spacer()
             HStack(spacing: 8) {
@@ -60,26 +63,26 @@ struct TodayView: View {
                     Text("\(store.state.sealsAvailable)").font(AppFont.mono(12))
                 }
                 .padding(.horizontal, 11).padding(.vertical, 8)
-                .background(Palette.ink2)
-                .overlay(Capsule().stroke(Palette.inkLine, lineWidth: 1))
+                .background(colors.ink2)
+                .overlay(Capsule().stroke(colors.inkLine, lineWidth: 1))
                 .clipShape(Capsule())
                 .foregroundColor(theme.brass)
 
                 Button(action: openNotifSettings) {
                     Image(systemName: store.state.notifPrefs.enabled ? "bell.fill" : "bell")
-                        .foregroundColor(store.state.notifPrefs.enabled ? theme.brass : Palette.textDim)
+                        .foregroundColor(store.state.notifPrefs.enabled ? theme.brass : colors.textDim)
                         .frame(width: 36, height: 36)
-                        .background(Circle().fill(Palette.ink2))
-                        .overlay(Circle().stroke(Palette.inkLine, lineWidth: 1))
+                        .background(Circle().fill(colors.ink2))
+                        .overlay(Circle().stroke(colors.inkLine, lineWidth: 1))
                 }
                 .buttonStyle(.plain)
 
                 Button(action: openInfo) {
                     Image(systemName: "info")
-                        .foregroundColor(Palette.textDim)
+                        .foregroundColor(colors.textDim)
                         .frame(width: 36, height: 36)
-                        .background(Circle().fill(Palette.ink2))
-                        .overlay(Circle().stroke(Palette.inkLine, lineWidth: 1))
+                        .background(Circle().fill(colors.ink2))
+                        .overlay(Circle().stroke(colors.inkLine, lineWidth: 1))
                 }
                 .buttonStyle(.plain)
             }
@@ -88,21 +91,22 @@ struct TodayView: View {
 
     @ViewBuilder
     private var activeScrollCard: some View {
+        let colors = AdaptivePalette(mode: appearanceMode)
         if let active = store.state.activeScroll {
             let days = store.state.scrollDaysCompleted(active.id)
             CardView {
-                Text("ACTIVE SCROLL").font(AppFont.mono(10)).tracking(1.4).foregroundColor(Palette.textFaint)
+                Text("ACTIVE SCROLL").font(AppFont.mono(10)).tracking(1.4).foregroundColor(colors.textFaint)
                 Text("Scroll \(active.roman)\(active.title.isEmpty ? "" : " — \(active.title)")")
-                    .font(AppFont.display(19)).foregroundColor(Palette.text)
+                    .font(AppFont.display(19)).foregroundColor(colors.text)
                     .padding(.top, 2)
                 if !active.theme.isEmpty {
-                    Text(active.theme).font(.system(size: 13)).italic().foregroundColor(Palette.textDim)
+                    Text(active.theme).font(.system(size: 13)).italic().foregroundColor(colors.textDim)
                         .padding(.top, 2)
                 }
                 ProgressTrack(pct: min(100, Double(days) / 30 * 100), brassDim: theme.brassDim, glow: theme.glow)
                     .padding(.top, 12)
                 Text("\(days) of 30 days complete")
-                    .font(AppFont.mono(11)).foregroundColor(Palette.textFaint)
+                    .font(AppFont.mono(11)).foregroundColor(colors.textFaint)
                     .padding(.top, 7)
             }
         } else if let reread = store.state.rereadScroll, let cs = store.state.cycleState {
@@ -110,21 +114,21 @@ struct TodayView: View {
             let goal = Constants.cycleGoalDays
             CardView {
                 HStack {
-                    Text("CYCLE \(cs.cycle) · REVISITING").font(AppFont.mono(10)).tracking(1.4).foregroundColor(Palette.textFaint)
+                    Text("CYCLE \(cs.cycle) · REVISITING").font(AppFont.mono(10)).tracking(1.4).foregroundColor(colors.textFaint)
                     Spacer()
-                    Text("SCROLL \(reread.roman) OF X").font(AppFont.mono(10)).tracking(1.4).foregroundColor(Palette.textFaint)
+                    Text("SCROLL \(reread.roman) OF X").font(AppFont.mono(10)).tracking(1.4).foregroundColor(colors.textFaint)
                 }
                 Text("Scroll \(reread.roman)\(reread.title.isEmpty ? "" : " — \(reread.title)")")
-                    .font(AppFont.display(19)).foregroundColor(Palette.text)
+                    .font(AppFont.display(19)).foregroundColor(colors.text)
                     .padding(.top, 2)
                 if !reread.theme.isEmpty {
-                    Text(reread.theme).font(.system(size: 13)).italic().foregroundColor(Palette.textDim)
+                    Text(reread.theme).font(.system(size: 13)).italic().foregroundColor(colors.textDim)
                         .padding(.top, 2)
                 }
                 ProgressTrack(pct: min(100, Double(done) / Double(goal) * 100), brassDim: theme.brassDim, glow: theme.glow)
                     .padding(.top, 12)
                 Text("\(done) of \(goal) days revisited — then the next scroll comes round")
-                    .font(AppFont.mono(11)).foregroundColor(Palette.textFaint)
+                    .font(AppFont.mono(11)).foregroundColor(colors.textFaint)
                     .padding(.top, 7)
                 Button {
                     openScroll(reread)
@@ -136,9 +140,9 @@ struct TodayView: View {
             }
         } else {
             CardView {
-                Text("All ten scrolls mastered").font(AppFont.display(19)).foregroundColor(Palette.text)
+                Text("All ten scrolls mastered").font(AppFont.display(19)).foregroundColor(colors.text)
                 Text("The practice isn't a checklist — it works by returning to the ideas. Begin a new cycle to revisit each scroll, one at a time. Your daily reading keeps counting.")
-                    .font(.system(size: 13)).foregroundColor(Palette.textDim).padding(.top, 4)
+                    .font(.system(size: 13)).foregroundColor(colors.textDim).padding(.top, 4)
                 Button {
                     store.beginCycle()
                 } label: {
@@ -214,7 +218,8 @@ struct TodayView: View {
     }
 
     private var habitsSection: some View {
-        VStack(alignment: .leading, spacing: 0) {
+        let colors = AdaptivePalette(mode: appearanceMode)
+        return VStack(alignment: .leading, spacing: 0) {
             SectionLabel(text: "Today's Habits")
             CardView {
                 if store.state.habits.isEmpty {
@@ -227,12 +232,12 @@ struct TodayView: View {
                                 habit: habit,
                                 done: habit.completedDates.contains(DateKey.today()),
                                 streak: store.state.habitStreak(habit),
-                                green: Palette.green,
+                                green: colors.green,
                                 onToggle: { store.toggleHabit(habit.id) },
                                 onDelete: { store.removeHabit(habit.id) }
                             )
                             if habit.id != store.state.habits.last?.id {
-                                Divider().background(Palette.ink3)
+                                Divider().background(colors.ink3)
                             }
                         }
                     }
@@ -245,9 +250,9 @@ struct TodayView: View {
                         Image(systemName: "plus")
                     }
                     .frame(width: 40, height: 40)
-                    .background(Palette.ink3)
+                    .background(colors.ink3)
                     .foregroundColor(theme.brass)
-                    .overlay(RoundedRectangle(cornerRadius: 10).stroke(Palette.inkLine, lineWidth: 1))
+                    .overlay(RoundedRectangle(cornerRadius: 10).stroke(colors.inkLine, lineWidth: 1))
                     .clipShape(RoundedRectangle(cornerRadius: 10))
                 }
                 .padding(.top, 12)

@@ -1,5 +1,7 @@
 import Foundation
 
+// MARK: - Daily Practice Widget Data
+
 struct WidgetData: Codable {
     var streak: Int
     var activeScrollRoman: String

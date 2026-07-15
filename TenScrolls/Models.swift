@@ -419,6 +419,25 @@ struct JournalEntry: Identifiable, Codable, Equatable {
     var scrollId: Int?
     var text: String
     var isDraft: Bool = false
+
+    init(id: String, date: String, scrollId: Int?, text: String, isDraft: Bool = false) {
+        self.id = id
+        self.date = date
+        self.scrollId = scrollId
+        self.text = text
+        self.isDraft = isDraft
+    }
+
+    // Custom decoding so entries saved before `isDraft` existed still decode
+    // (a missing key becomes `false` instead of throwing and wiping the journal).
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decode(String.self, forKey: .id)
+        date = try container.decode(String.self, forKey: .date)
+        scrollId = try container.decodeIfPresent(Int.self, forKey: .scrollId)
+        text = try container.decode(String.self, forKey: .text)
+        isDraft = try container.decodeIfPresent(Bool.self, forKey: .isDraft) ?? false
+    }
 }
 
 /// Tracks the rereading loop that begins once all ten scrolls are mastered.

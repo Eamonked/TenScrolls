@@ -5,6 +5,7 @@ import Combine
 
 struct ScrollEditorSheet: View {
     @EnvironmentObject var store: AppStore
+    @Environment(\.appearanceMode) var appearanceMode
     @Environment(\.dismiss) private var dismiss
     let scroll: Scroll
     var onSave: (Scroll) -> Void
@@ -66,6 +67,7 @@ struct ScrollEditorSheet: View {
     var days: Int { store.state.scrollDaysCompleted(scroll.id) }
 
     var body: some View {
+        let colors = AdaptivePalette(mode: appearanceMode)
         NavigationStack {
             ScrollView {
                 if editing {
@@ -74,7 +76,7 @@ struct ScrollEditorSheet: View {
                     readingView
                 }
             }
-            .background(Palette.ink2.ignoresSafeArea())
+            .background(colors.ink2.ignoresSafeArea())
             .navigationTitle(editing ? "Edit Scroll \(scroll.roman)" : "Scroll \(scroll.roman)")
             .inlineNavigationBarTitle()
             .toolbar {
@@ -91,7 +93,7 @@ struct ScrollEditorSheet: View {
                             if !editing && !canComplete && hasContent {
                                 Image(systemName: "lock.fill")
                                     .font(.system(size: 10))
-                                    .foregroundColor(Palette.textFaint)
+                                    .foregroundColor(colors.textFaint)
                             }
                         }
                     }
@@ -132,7 +134,8 @@ struct ScrollEditorSheet: View {
     // MARK: - Reading View
 
     private var readingView: some View {
-        ScrollViewReader { proxy in
+        let colors = AdaptivePalette(mode: appearanceMode)
+        return ScrollViewReader { proxy in
             ScrollView {
                 VStack(alignment: .leading, spacing: 0) {
                     // Header ornament
@@ -165,7 +168,7 @@ struct ScrollEditorSheet: View {
                     if !title.isEmpty {
                         Text(title)
                             .font(AppFont.display(26, weight: .bold))
-                            .foregroundColor(Palette.text)
+                            .foregroundColor(colors.text)
                             .multilineTextAlignment(.leading)
                             .padding(.bottom, 4)
                     }
@@ -206,13 +209,13 @@ struct ScrollEditorSheet: View {
                         VStack(spacing: 14) {
                             Image(systemName: "square.and.pencil")
                                 .font(.system(size: 32))
-                                .foregroundColor(Palette.textFaint)
+                                .foregroundColor(colors.textFaint)
                             Text("No notes yet")
                                 .font(AppFont.display(18))
-                                .foregroundColor(Palette.textDim)
+                                .foregroundColor(colors.textDim)
                             Text("Tap the pencil icon above to transcribe\nyour title and notes from the book.")
                                 .font(.system(size: 13))
-                                .foregroundColor(Palette.textFaint)
+                                .foregroundColor(colors.textFaint)
                                 .multilineTextAlignment(.center)
                         }
                         .frame(maxWidth: .infinity)
@@ -235,12 +238,12 @@ struct ScrollEditorSheet: View {
                                 if !hasScrolledToBottom {
                                     Label("Scroll to the end to complete", systemImage: "arrow.down")
                                         .font(.system(size: 13))
-                                        .foregroundColor(Palette.textFaint)
+                                        .foregroundColor(colors.textFaint)
                                 } else if !hasMetTimeRequirement {
                                     let remaining = Int(minimumReadingTimeSeconds - currentTime.timeIntervalSince(readingStartTime ?? Date()))
                                     Label("Take your time (\(max(0, remaining))s)", systemImage: "clock")
                                         .font(.system(size: 13))
-                                        .foregroundColor(Palette.textFaint)
+                                        .foregroundColor(colors.textFaint)
                                 }
                             }
                             .padding(.vertical, 12)
@@ -302,6 +305,7 @@ struct ScrollEditorSheet: View {
 
     @ViewBuilder
     private func paragraphBlock(_ paragraph: String, index: Int) -> some View {
+        let colors = AdaptivePalette(mode: appearanceMode)
         let isBookmarked = scroll.bookmarkParagraphIndex == index || justBookmarkedIndex == index
         VStack(alignment: .leading, spacing: 8) {
             if isBookmarked {
@@ -314,7 +318,7 @@ struct ScrollEditorSheet: View {
             SelectableParagraphView(
                 text: paragraph,
                 fontSize: 16,
-                textColor: UIColor(Palette.text.opacity(0.92)),
+                textColor: UIColor(colors.text.opacity(0.92)),
                 lineSpacing: 7,
                 onAddToJournal: { excerpt in
                     pendingExcerpt = excerpt
@@ -338,24 +342,25 @@ struct ScrollEditorSheet: View {
     // MARK: - Editing View
 
     private var editingView: some View {
-        VStack(alignment: .leading, spacing: 4) {
+        let colors = AdaptivePalette(mode: appearanceMode)
+        return VStack(alignment: .leading, spacing: 4) {
             if scroll.status == .active {
                 Text("Complete 30 days on this scroll to earn 200 XP, 20 seals, and unlock the next.")
-                    .font(.system(size: 13)).foregroundColor(Palette.textDim)
+                    .font(.system(size: 13)).foregroundColor(colors.textDim)
                     .padding(.bottom, 6)
             } else if scroll.status == .locked {
                 Text("This scroll is locked. You can still transcribe its title and notes — it will become your active practice once unlocked.")
-                    .font(.system(size: 13)).foregroundColor(Palette.textDim)
+                    .font(.system(size: 13)).foregroundColor(colors.textDim)
                     .padding(.bottom, 6)
             }
-            Text("TITLE").font(AppFont.mono(10.5)).tracking(1.2).foregroundColor(Palette.textFaint)
+            Text("TITLE").font(AppFont.mono(10.5)).tracking(1.2).foregroundColor(colors.textFaint)
             TextField("Give this scroll a title", text: $title).textFieldStyle(AppTextFieldStyle())
 
-            Text("ONE-LINE THEME").font(AppFont.mono(10.5)).tracking(1.2).foregroundColor(Palette.textFaint).padding(.top, 12)
+            Text("ONE-LINE THEME").font(AppFont.mono(10.5)).tracking(1.2).foregroundColor(colors.textFaint).padding(.top, 12)
             TextField("e.g. what this scroll asks of you", text: $theme).textFieldStyle(AppTextFieldStyle())
 
             HStack {
-                Text("YOUR NOTES").font(AppFont.mono(10.5)).tracking(1.2).foregroundColor(Palette.textFaint)
+                Text("YOUR NOTES").font(AppFont.mono(10.5)).tracking(1.2).foregroundColor(colors.textFaint)
                 Spacer()
                 if !notes.isEmpty {
                     Button("Clean up") {
@@ -371,14 +376,14 @@ struct ScrollEditorSheet: View {
                     .frame(minHeight: 200)
                     .padding(8)
                     .scrollContentBackground(.hidden)
-                    .background(Palette.ink3)
-                    .overlay(RoundedRectangle(cornerRadius: 10).stroke(Palette.inkLine, lineWidth: 1))
+                    .background(colors.ink3)
+                    .overlay(RoundedRectangle(cornerRadius: 10).stroke(colors.inkLine, lineWidth: 1))
                     .clipShape(RoundedRectangle(cornerRadius: 10))
-                    .foregroundColor(Palette.text)
+                    .foregroundColor(colors.text)
                 if notes.isEmpty {
                     Text("Paste or type freely — leave a blank line between paragraphs, and everything else sorts itself out.")
                         .font(.system(size: 13))
-                        .foregroundColor(Palette.textFaint)
+                        .foregroundColor(colors.textFaint)
                         .padding(.horizontal, 14)
                         .padding(.vertical, 16)
                         .allowsHitTesting(false)
@@ -386,7 +391,7 @@ struct ScrollEditorSheet: View {
             }
             Text("Tip: pasted text often has a line break after every line. Tap “Clean up” and it'll reflow into proper paragraphs.")
                 .font(.system(size: 11.5))
-                .foregroundColor(Palette.textFaint)
+                .foregroundColor(colors.textFaint)
                 .padding(.top, 4)
         }
         .padding(20)
@@ -395,11 +400,12 @@ struct ScrollEditorSheet: View {
     // MARK: - Status Pill
 
     private var statusPill: some View {
+        let colors = AdaptivePalette(mode: appearanceMode)
         let (label, icon, color): (String, String, Color) = {
             switch scroll.status {
-            case .mastered: return ("Mastered", "rosette", Palette.green)
+            case .mastered: return ("Mastered", "rosette", colors.green)
             case .active: return ("Day \(days) of 30", "flame", themeOption.brass)
-            case .locked: return ("Locked", "lock.fill", Palette.textFaint)
+            case .locked: return ("Locked", "lock.fill", colors.textFaint)
             }
         }()
         return HStack(spacing: 5) {
@@ -416,6 +422,7 @@ struct ScrollEditorSheet: View {
 
 struct JournalComposerSheet: View {
     @EnvironmentObject var store: AppStore
+    @Environment(\.appearanceMode) var appearanceMode
     @Environment(\.dismiss) private var dismiss
     let scroll: Scroll?
     var onSave: (String) -> Void
@@ -430,10 +437,11 @@ struct JournalComposerSheet: View {
     var themeOption: ThemeOption { Palette.theme(for: store.state.activeThemeId) }
 
     var body: some View {
+        let colors = AdaptivePalette(mode: appearanceMode)
         NavigationStack {
             VStack(alignment: .leading, spacing: 8) {
                 Text("\(scroll.map { "SCROLL \($0.roman)" } ?? "GENERAL") · \(DateKey.short(DateKey.today())) · +15 XP")
-                    .font(AppFont.mono(10.5)).tracking(1.0).foregroundColor(Palette.textFaint)
+                    .font(AppFont.mono(10.5)).tracking(1.0).foregroundColor(colors.textFaint)
                 HStack {
                     Spacer()
                     if !text.isEmpty {
@@ -449,14 +457,14 @@ struct JournalComposerSheet: View {
                         .frame(minHeight: 220)
                         .padding(8)
                         .scrollContentBackground(.hidden)
-                        .background(Palette.ink3)
-                        .overlay(RoundedRectangle(cornerRadius: 10).stroke(Palette.inkLine, lineWidth: 1))
+                        .background(colors.ink3)
+                        .overlay(RoundedRectangle(cornerRadius: 10).stroke(colors.inkLine, lineWidth: 1))
                         .clipShape(RoundedRectangle(cornerRadius: 10))
-                        .foregroundColor(Palette.text)
+                        .foregroundColor(colors.text)
                     if text.isEmpty {
                         Text("What stood out today? Write freely — leave a blank line between thoughts if you want them kept separate.")
                             .font(.system(size: 13))
-                            .foregroundColor(Palette.textFaint)
+                            .foregroundColor(colors.textFaint)
                             .padding(.horizontal, 14)
                             .padding(.vertical, 16)
                             .allowsHitTesting(false)
@@ -473,7 +481,7 @@ struct JournalComposerSheet: View {
                 Spacer()
             }
             .padding(20)
-            .background(Palette.ink2.ignoresSafeArea())
+            .background(colors.ink2.ignoresSafeArea())
             .navigationTitle("Today's Reflection")
             .inlineNavigationBarTitle()
             .toolbar {
@@ -488,6 +496,7 @@ struct JournalComposerSheet: View {
 
 struct NotificationSettingsModal: View {
     @EnvironmentObject var store: AppStore
+    @Environment(\.appearanceMode) var appearanceMode
     @Environment(\.dismiss) private var dismiss
 
     @State private var status: UNAuthorizationStatus = .notDetermined
@@ -500,20 +509,21 @@ struct NotificationSettingsModal: View {
     private var prefs: NotificationPrefs { store.state.notifPrefs }
 
     var body: some View {
+        let colors = AdaptivePalette(mode: appearanceMode)
         NavigationStack {
             ScrollView {
                 VStack(alignment: .leading, spacing: 16) {
                     Text("Get reminded when it's time for your Dawn, Midday, and Dusk reading. If a session goes unanswered, Ten Scrolls escalates to a full-screen call.")
-                        .font(.system(size: 13)).foregroundColor(Palette.textDim)
+                        .font(.system(size: 13)).foregroundColor(colors.textDim)
 
                     // Master toggle
                     CardView {
                         HStack {
                             Image(systemName: prefs.enabled ? "bell.badge.fill" : "bell.slash")
-                                .foregroundColor(prefs.enabled ? themeOption.brass : Palette.textFaint)
+                                .foregroundColor(prefs.enabled ? themeOption.brass : colors.textFaint)
                             Text(prefs.enabled ? "Reminders on" : "Reminders off")
                                 .font(.system(size: 14, weight: .medium))
-                                .foregroundColor(Palette.text)
+                                .foregroundColor(colors.text)
                             Spacer()
                             Toggle("", isOn: Binding(
                                 get: { prefs.enabled },
@@ -523,10 +533,10 @@ struct NotificationSettingsModal: View {
                             .tint(themeOption.brass)
                         }
                         if isAuthorizationDenied {
-                            Divider().background(Palette.ink3).padding(.vertical, 10)
+                            Divider().background(colors.ink3).padding(.vertical, 10)
                             Label("Notifications are turned off in iOS Settings. Enable them for Ten Scrolls to receive reminders.",
                                   systemImage: "exclamationmark.triangle")
-                                .font(.system(size: 12)).foregroundColor(Palette.textDim)
+                                .font(.system(size: 12)).foregroundColor(colors.textDim)
                         }
                     }
 
@@ -534,9 +544,9 @@ struct NotificationSettingsModal: View {
                     SectionLabel(text: "Reminder Times")
                     CardView {
                         timeRow(session: .dawn, keyPath: \.dawnTime)
-                        Divider().background(Palette.ink3)
+                        Divider().background(colors.ink3)
                         timeRow(session: .midday, keyPath: \.middayTime)
-                        Divider().background(Palette.ink3)
+                        Divider().background(colors.ink3)
                         timeRow(session: .dusk, keyPath: \.duskTime)
                     }
                     .disabled(!prefs.enabled)
@@ -545,19 +555,19 @@ struct NotificationSettingsModal: View {
                     // Reading windows
                     SectionLabel(text: "Reading Windows")
                     Text("Set when each session can be marked as complete. These windows control eligibility, separate from reminder times.")
-                        .font(.system(size: 12)).foregroundColor(Palette.textDim)
+                        .font(.system(size: 12)).foregroundColor(colors.textDim)
                     CardView {
                         windowRow(session: .dawn)
-                        Divider().background(Palette.ink3)
+                        Divider().background(colors.ink3)
                         windowRow(session: .midday)
-                        Divider().background(Palette.ink3)
+                        Divider().background(colors.ink3)
                         windowRow(session: .dusk)
                         
                         if hasInvalidWindows {
-                            Divider().background(Palette.ink3).padding(.vertical, 10)
+                            Divider().background(colors.ink3).padding(.vertical, 10)
                             Label("One or more windows have invalid times. They'll use defaults until fixed.",
                                   systemImage: "exclamationmark.triangle")
-                                .font(.system(size: 12)).foregroundColor(Palette.textDim)
+                                .font(.system(size: 12)).foregroundColor(colors.textDim)
                         }
                     }
                     
@@ -581,9 +591,9 @@ struct NotificationSettingsModal: View {
                     CardView {
                         HStack {
                             Image(systemName: "phone.arrow.up.right")
-                                .foregroundColor(prefs.callEnabled ? themeOption.brass : Palette.textFaint)
+                                .foregroundColor(prefs.callEnabled ? themeOption.brass : colors.textFaint)
                             Text("Call me if unanswered")
-                                .font(.system(size: 14)).foregroundColor(Palette.text)
+                                .font(.system(size: 14)).foregroundColor(colors.text)
                             Spacer()
                             Toggle("", isOn: Binding(
                                 get: { prefs.callEnabled },
@@ -593,13 +603,13 @@ struct NotificationSettingsModal: View {
                             .tint(themeOption.brass)
                         }
                         if prefs.callEnabled {
-                            Divider().background(Palette.ink3).padding(.vertical, 12)
+                            Divider().background(colors.ink3).padding(.vertical, 12)
                             Stepper(value: Binding(
                                 get: { prefs.callTimeoutMinutes },
                                 set: { v in update { $0.callTimeoutMinutes = v } }
                             ), in: 1...120, step: 1) {
                                 Text("After \(prefs.callTimeoutMinutes) min")
-                                    .font(.system(size: 14)).foregroundColor(Palette.text)
+                                    .font(.system(size: 14)).foregroundColor(colors.text)
                             }
                         }
                     }
@@ -610,7 +620,7 @@ struct NotificationSettingsModal: View {
                 }
                 .padding(20)
             }
-            .background(Palette.ink2.ignoresSafeArea())
+            .background(colors.ink2.ignoresSafeArea())
             .navigationTitle("Reminders")
             .inlineNavigationBarTitle()
             .toolbar {
@@ -649,10 +659,11 @@ struct NotificationSettingsModal: View {
     }
 
     private func timeRow(session: Session, keyPath: WritableKeyPath<NotificationPrefs, String>) -> some View {
-        HStack {
+        let colors = AdaptivePalette(mode: appearanceMode)
+        return HStack {
             Label(session.label, systemImage: session.systemImage)
                 .font(.system(size: 14))
-                .foregroundColor(Palette.text)
+                .foregroundColor(colors.text)
             Spacer()
             DatePicker("", selection: Binding(
                 get: { dateFromHHmm(prefs[keyPath: keyPath]) },
@@ -664,6 +675,7 @@ struct NotificationSettingsModal: View {
     }
 
     private func windowRow(session: Session) -> some View {
+        let colors = AdaptivePalette(mode: appearanceMode)
         let windowPrefs = store.state.windowPrefs
         let (startTime, endTime) = windowPrefs.window(for: session)
         
@@ -671,13 +683,13 @@ struct NotificationSettingsModal: View {
             HStack {
                 Label(session.label, systemImage: session.systemImage)
                     .font(.system(size: 14))
-                    .foregroundColor(Palette.text)
+                    .foregroundColor(colors.text)
                 Spacer()
             }
             
             HStack(spacing: 12) {
                 VStack(alignment: .leading, spacing: 4) {
-                    Text("Opens").font(.system(size: 11)).foregroundColor(Palette.textFaint)
+                    Text("Opens").font(.system(size: 11)).foregroundColor(colors.textFaint)
                     DatePicker("", selection: Binding(
                         get: { dateFromHHmm(startTime) },
                         set: { newDate in updateWindow(session: session, start: hhmm(from: newDate), end: endTime) }
@@ -686,7 +698,7 @@ struct NotificationSettingsModal: View {
                 }
                 
                 VStack(alignment: .leading, spacing: 4) {
-                    Text("Closes").font(.system(size: 11)).foregroundColor(Palette.textFaint)
+                    Text("Closes").font(.system(size: 11)).foregroundColor(colors.textFaint)
                     DatePicker("", selection: Binding(
                         get: { dateFromHHmm(endTime) },
                         set: { newDate in updateWindow(session: session, start: startTime, end: hhmm(from: newDate)) }
@@ -751,9 +763,11 @@ private func hhmm(from date: Date) -> String {
 }
 
 struct InfoSheet: View {
+    @Environment(\.appearanceMode) var appearanceMode
     @Environment(\.dismiss) private var dismiss
 
     var body: some View {
+        let colors = AdaptivePalette(mode: appearanceMode)
         NavigationStack {
             ScrollView {
                 VStack(alignment: .leading, spacing: 12) {
@@ -762,10 +776,10 @@ struct InfoSheet: View {
                     Text("Set a trader handle in The Caravan tab to join the shared leaderboard and compare streaks with friends. Your handle, level, and streak become visible to other traders once set.")
                     Text("Add your own title, theme, and notes to each scroll from your copy of the book — this app doesn't include the text itself, just the structure and the game layer to help you stay with it.")
                 }
-                .font(.system(size: 13)).foregroundColor(Palette.textDim)
+                .font(.system(size: 13)).foregroundColor(colors.textDim)
                 .padding(20)
             }
-            .background(Palette.ink2.ignoresSafeArea())
+            .background(colors.ink2.ignoresSafeArea())
             .navigationTitle("How This Works")
             .inlineNavigationBarTitle()
             .toolbar {
@@ -776,10 +790,11 @@ struct InfoSheet: View {
         }
         .presentationDetents([.medium, .large])
     }
-    }
+}
 
 
 struct SkipReasonSheet: View {
+    @Environment(\.appearanceMode) var appearanceMode
     @Environment(\.dismiss) private var dismiss
     @EnvironmentObject var store: AppStore
 
@@ -793,16 +808,17 @@ struct SkipReasonSheet: View {
     var themeOption: ThemeOption { Palette.theme(for: store.state.activeThemeId) }
 
     var body: some View {
+        let colors = AdaptivePalette(mode: appearanceMode)
         NavigationStack {
             ScrollView {
                 VStack(alignment: .leading, spacing: 20) {
                     Text(isMissedDay ? "You missed a day." : "You skipped a session.")
                         .font(AppFont.display(24))
-                        .foregroundColor(Palette.text)
+                        .foregroundColor(colors.text)
 
                     Text("What got in the way? Logging this helps you notice patterns over time.")
                         .font(.system(size: 14))
-                        .foregroundColor(Palette.textDim)
+                        .foregroundColor(colors.textDim)
 
                     VStack(alignment: .leading, spacing: 8) {
                         ForEach(quickReasons, id: \.self) { reason in
@@ -816,10 +832,10 @@ struct SkipReasonSheet: View {
                                     Image(systemName: "plus.circle")
                                 }
                                 .padding()
-                                .background(Palette.ink3)
-                                .foregroundColor(Palette.text)
+                                .background(colors.ink3)
+                                .foregroundColor(colors.text)
                                 .cornerRadius(10)
-                                .overlay(RoundedRectangle(cornerRadius: 10).stroke(Palette.inkLine, lineWidth: 1))
+                                .overlay(RoundedRectangle(cornerRadius: 10).stroke(colors.inkLine, lineWidth: 1))
                             }
                             .buttonStyle(.plain)
                         }
@@ -834,9 +850,9 @@ struct SkipReasonSheet: View {
                             Image(systemName: "arrow.up")
                         }
                         .frame(width: 40, height: 40)
-                        .background(Palette.ink3)
+                        .background(colors.ink3)
                         .foregroundColor(themeOption.brass)
-                        .overlay(RoundedRectangle(cornerRadius: 10).stroke(Palette.inkLine, lineWidth: 1))
+                        .overlay(RoundedRectangle(cornerRadius: 10).stroke(colors.inkLine, lineWidth: 1))
                         .clipShape(RoundedRectangle(cornerRadius: 10))
                         .disabled(customReason.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                     }
@@ -846,13 +862,13 @@ struct SkipReasonSheet: View {
                         dismiss()
                     }
                     .font(.system(size: 14, weight: .medium))
-                    .foregroundColor(Palette.textDim)
+                    .foregroundColor(colors.textDim)
                     .frame(maxWidth: .infinity, alignment: .center)
                     .padding(.top, 24)
                 }
                 .padding(24)
             }
-            .background(Palette.ink2.ignoresSafeArea())
+            .background(colors.ink2.ignoresSafeArea())
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {

@@ -2,6 +2,7 @@ import SwiftUI
 
 struct WeeklyRecapView: View {
     @EnvironmentObject var store: AppStore
+    @Environment(\.appearanceMode) var appearanceMode
     @Environment(\.dismiss) private var dismiss
 
     var theme: ThemeOption { Palette.theme(for: store.state.activeThemeId) }
@@ -38,9 +39,10 @@ struct WeeklyRecapView: View {
     }
     
     var body: some View {
+        let colors = AdaptivePalette(mode: appearanceMode)
         NavigationStack {
             ZStack {
-                Palette.background.ignoresSafeArea()
+                colors.background.ignoresSafeArea()
                 
                 ScrollView {
                     VStack(spacing: 30) {
@@ -53,44 +55,44 @@ struct WeeklyRecapView: View {
                                 .foregroundColor(theme.brass)
                             Text("Looking Back")
                                 .font(AppFont.display(32))
-                                .foregroundColor(Palette.text)
+                                .foregroundColor(colors.text)
                         }
                         .padding(.top, 40)
                         
                         // Stats Card
                         VStack(spacing: 20) {
                             HStack {
-                                StatBox(title: "DAYS READ", value: "\(daysCompleted)/7", theme: theme)
-                                StatBox(title: "STREAK", value: "\(store.state.currentStreak)", theme: theme)
+                                StatBox(title: "DAYS READ", value: "\(daysCompleted)/7", theme: theme, colors: colors)
+                                StatBox(title: "STREAK", value: "\(store.state.currentStreak)", theme: theme, colors: colors)
                             }
                             
                             // Habit Health
                             VStack(alignment: .leading, spacing: 12) {
-                                Text("HABIT HEALTH").font(AppFont.mono(10)).tracking(1.5).foregroundColor(Palette.textDim)
+                                Text("HABIT HEALTH").font(AppFont.mono(10)).tracking(1.5).foregroundColor(colors.textDim)
                                 if store.state.habits.isEmpty {
                                     Text("No habits tracked this week.")
                                         .font(.system(size: 13))
-                                        .foregroundColor(Palette.textFaint)
+                                        .foregroundColor(colors.textFaint)
                                 }
                                 ForEach(store.state.habits) { habit in
                                     HStack {
                                         Text(habit.name)
                                             .font(.system(size: 14))
-                                            .foregroundColor(Palette.text)
+                                            .foregroundColor(colors.text)
                                         Spacer()
                                         let upheld = weekDayKeys.filter { habit.completedDates.contains($0) }.count
                                         Text("\(upheld)/7")
                                             .font(AppFont.mono(12))
-                                            .foregroundColor(upheld == 0 ? Palette.textFaint : theme.brass)
+                                            .foregroundColor(upheld == 0 ? colors.textFaint : theme.brass)
                                     }
                                 }
                             }
                             .padding(.top, 10)
                         }
                         .padding(24)
-                        .background(Palette.ink2)
+                        .background(colors.ink2)
                         .cornerRadius(20)
-                        .overlay(RoundedRectangle(cornerRadius: 20).stroke(Palette.inkLine, lineWidth: 1))
+                        .overlay(RoundedRectangle(cornerRadius: 20).stroke(colors.inkLine, lineWidth: 1))
                         .padding(.horizontal, 24)
                         
                         // Reflection
@@ -104,7 +106,7 @@ struct WeeklyRecapView: View {
                                 Text("\"\(entry.text)\"")
                                     .font(.system(size: 18, weight: .regular, design: .serif))
                                     .italic()
-                                    .foregroundColor(Palette.text)
+                                    .foregroundColor(colors.text)
                                     .multilineTextAlignment(.center)
                                     .lineSpacing(6)
                                     .padding(.horizontal, 20)
@@ -120,7 +122,7 @@ struct WeeklyRecapView: View {
                         } label: {
                             Text("Continue to Today")
                                 .font(.system(size: 16, weight: .bold))
-                                .foregroundColor(Palette.background)
+                                .foregroundColor(colors.background)
                                 .frame(maxWidth: .infinity)
                                 .padding(.vertical, 16)
                                 .background(theme.brass)
@@ -140,20 +142,21 @@ private struct StatBox: View {
     let title: String
     let value: String
     let theme: ThemeOption
+    let colors: AdaptivePalette
     
     var body: some View {
         VStack(spacing: 4) {
             Text(title)
                 .font(AppFont.mono(10))
                 .tracking(1.5)
-                .foregroundColor(Palette.textDim)
+                .foregroundColor(colors.textDim)
             Text(value)
                 .font(AppFont.display(24))
-                .foregroundColor(Palette.text)
+                .foregroundColor(colors.text)
         }
         .frame(maxWidth: .infinity)
         .padding(.vertical, 16)
-        .background(Palette.ink3)
+        .background(colors.ink3)
         .cornerRadius(12)
     }
 }
