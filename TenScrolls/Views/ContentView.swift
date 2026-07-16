@@ -126,11 +126,15 @@ struct ContentView: View {
             runStartOfDayChecks()
         }
         .onChange(of: scenePhase) { _, phase in
-            // Refresh one-shot escalation calls whenever the app returns to the foreground.
             if phase == .active {
+                // Refresh one-shot escalation calls whenever the app returns to the foreground.
                 store.checkPendingAlarmSession()
                 store.syncNotifications()
                 runStartOfDayChecks()
+            } else if phase == .inactive || phase == .background {
+                // Persistence is debounced while the app is active; make sure a
+                // pending write lands before we might get suspended or killed.
+                store.flushPendingPersist()
             }
         }
     }

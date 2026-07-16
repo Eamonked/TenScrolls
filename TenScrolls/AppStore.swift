@@ -1,7 +1,6 @@
 import Foundation
 import Combine
 import WidgetKit
-import AlarmKit
 
 @MainActor
 final class AppStore: ObservableObject {
@@ -16,8 +15,14 @@ final class AppStore: ObservableObject {
     private var prevMasteredIds: [Int]
     private var prevEarnedIds: [String]
     private var toastTask: Task<Void, Never>?
+    private var persistTask: Task<Void, Never>?
 
-    private let defaultsKey = "ten-scrolls-state"
+    /// How long to wait after the last mutation before actually writing to disk.
+    /// Coalesces bursts of rapid-fire mutations (e.g. every keystroke while
+    /// journaling) into a single encode + write instead of one per change.
+    private static let persistDebounceNanoseconds: UInt64 = 350_000_000
+
+    private nonisolated let defaultsKey = "ten-scrolls-state"
     let leaderboard = CloudKitLeaderboard()
     let notifier = NotificationManager()
 
@@ -46,11 +51,11 @@ final class AppStore: ObservableObject {
         publishSnapshotIfNeeded()
 
         notifier.registerDelegate()
-        notifier.onIncomingCall = { [weak self] session in
+        notifier.onIncomingCall = { [weak self] (session: Session) in
             self?.selectedTab = 0
             self?.incomingCall = PendingCall(session: session)
         }
-        notifier.onReminderTap = { [weak self] _ in
+        notifier.onReminderTap = { [weak self] (_: Session) in
             self?.selectedTab = 0
         }
         syncNotifications()
@@ -67,12 +72,7 @@ final class AppStore: ObservableObject {
     /// Rebuild scheduled notifications from current prefs + today's progress. Cheap and
     /// idempotent; call it after session changes, pref changes, and on foreground.
     func syncNotifications() {
-        if #available(iOS 26, *) {
-            let done = doneSessionsToday
-            Task { await AlarmScheduler.shared.reschedule(from: state.notifPrefs, doneSessions: done) }
-        } else {
-            notifier.reschedule(prefs: state.notifPrefs, doneSessions: doneSessionsToday)
-        }
+        reminders.reschedule(from: state.notifPrefs, doneSessions: doneSessionsToday)
     }
 
     func updateNotifPrefs(_ prefs: NotificationPrefs) {
@@ -89,28 +89,19 @@ final class AppStore: ObservableObject {
     /// Toggles reminders, requesting system permission first when turning them on.
     func setNotificationsEnabled(_ enabled: Bool) async {
         if enabled {
-            if #available(iOS 26, *) {
-                let granted = await AlarmScheduler.shared.requestAuthorizationIfNeeded()
-                guard granted else { return }
-            } else {
-                let granted = await notifier.requestAuthorization()
-                guard granted else { return }
-            }
+            let granted = await reminders.requestAuthorizationIfNeeded()
+            guard granted else { return }
         }
         var prefs = state.notifPrefs
         prefs.enabled = enabled
         updateNotifPrefs(prefs)
     }
 
-    /// Check if the app was launched from an AlarmKit "Open the app" intent.
-    /// If so, route to the Today tab and clear the pending key.
+    /// Check if the app was launched from an AlarmKit "Open the app" intent
+    /// (iOS 26+ only — a no-op below that). If so, route to the Today tab.
     func checkPendingAlarmSession() {
-        if #available(iOS 26, *) {
-            let key = AlarmScheduler.pendingSessionDefaultsKey
-            if let _ = UserDefaults.standard.string(forKey: key) {
-                selectedTab = 0
-                UserDefaults.standard.removeObject(forKey: key)
-            }
+        if reminders.consumePendingAlarmSession() {
+            selectedTab = 0
         }
     }
 
@@ -124,16 +115,41 @@ final class AppStore: ObservableObject {
         incomingCall = nil
     }
 
-    private func persist() {
-        let stateData = try? JSONEncoder().encode(state)
-        
+    /// Debounces persistence: cancels any pending write and schedules a new one.
+    /// Only the last state in a burst of rapid mutations actually gets encoded
+    /// and written, and the encode/write itself happens off the main actor so
+    /// typing or tapping never blocks on disk I/O.
+    private func schedulePersist() {
+        let snapshot = state
+        persistTask?.cancel()
+        persistTask = Task.detached(priority: .utility) { [snapshot, defaultsKey] in
+            try? await Task.sleep(nanoseconds: AppStore.persistDebounceNanoseconds)
+            guard !Task.isCancelled else { return }
+            AppStore.persist(snapshot, defaultsKey: defaultsKey)
+        }
+    }
+
+    /// Writes the current state immediately, bypassing the debounce. Call this
+    /// when the app is about to leave the foreground (or terminate) so a pending
+    /// debounced write isn't lost.
+    func flushPendingPersist() {
+        persistTask?.cancel()
+        persistTask = nil
+        AppStore.persist(state, defaultsKey: defaultsKey)
+    }
+
+    /// The actual encode + disk write. `nonisolated` (and `static`, taking an
+    /// explicit snapshot) so it can run entirely off the main actor with no
+    /// implicit hop back for state access — this is the expensive part we don't
+    /// want blocking the UI.
+    private nonisolated static func persist(_ state: AppState, defaultsKey: String) {
         let todayKey = DateKey.today()
         let todayLog = state.log[todayKey]
         let activeScroll = state.activeScroll
         let daysCompleted = activeScroll.map { state.scrollDaysCompleted($0.id) } ?? 0
         let themeId = state.activeThemeId
         let streak = state.currentStreak
-        
+
         let wData = WidgetData(
             streak: streak,
             activeScrollRoman: activeScroll?.roman ?? "X",
@@ -146,7 +162,7 @@ final class AppStore: ObservableObject {
             lastUpdated: Date()
         )
         WidgetData.save(wData)
-        
+
         // Export journal data for journal widget
         let journalEntries = state.journal
             .filter { !$0.isDraft && !$0.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
@@ -160,24 +176,22 @@ final class AppStore: ObservableObject {
                     scrollRoman: scroll?.roman
                 )
             }
-        
+
         let journalData = JournalWidgetData(
             entries: Array(journalEntries),
             themeId: themeId,
             lastUpdated: Date()
         )
         JournalWidgetData.save(journalData)
-        
-        DispatchQueue.global(qos: .background).async {
-            if let data = stateData {
-                UserDefaults.standard.set(data, forKey: self.defaultsKey)
-            }
-            WidgetCenter.shared.reloadAllTimelines()
+
+        if let data = try? JSONEncoder().encode(state) {
+            UserDefaults.standard.set(data, forKey: defaultsKey)
         }
+        WidgetCenter.shared.reloadAllTimelines()
     }
 
     private func afterMutation() {
-        persist()
+        schedulePersist()
         checkForNewMilestones()
         publishSnapshotIfNeeded()
     }
@@ -331,11 +345,7 @@ final class AppStore: ObservableObject {
         
         // Cancel the escalation call immediately when a session is completed
         if !wasSet && entry[keyPath: session] {
-            if #available(iOS 26, *) {
-                Task { await AlarmScheduler.shared.handleStop(sessionId: sessionType.rawValue) }
-            } else {
-                notifier.cancelEscalationCall(for: sessionType)
-            }
+            reminders.cancelEscalationCall(for: sessionType)
         }
         
         syncNotifications() // completing a session cancels its pending escalation call
@@ -470,15 +480,7 @@ final class AppStore: ObservableObject {
     }
 
     func addJournalEntry(_ text: String) {
-        let entry = JournalEntry(
-            id: "j\(Int(Date().timeIntervalSince1970 * 1000))",
-            date: DateKey.today(),
-            scrollId: state.activeScroll?.id,
-            text: text,
-            isDraft: false
-        )
-        state.journal.append(entry)
-        afterMutation()
+        addJournalEntry(text, scrollId: state.activeScroll?.id)
     }
 
     /// Adds a journal entry for a specific scroll — used when quoting a
@@ -569,11 +571,11 @@ final class AppStore: ObservableObject {
     func addFriend(_ code: String) {
         guard !state.friendCodes.contains(code), code != state.traderCode else { return }
         state.friendCodes.append(code)
-        persist()
+        schedulePersist()
     }
 
     func removeFriend(_ code: String) {
         state.friendCodes.removeAll { $0 == code }
-        persist()
+        schedulePersist()
     }
 }
