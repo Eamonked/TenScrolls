@@ -540,21 +540,9 @@ struct NotificationSettingsModal: View {
                         }
                     }
 
-                    // Reminder times
-                    SectionLabel(text: "Reminder Times")
-                    CardView {
-                        timeRow(session: .dawn, keyPath: \.dawnTime)
-                        Divider().background(colors.ink3)
-                        timeRow(session: .midday, keyPath: \.middayTime)
-                        Divider().background(colors.ink3)
-                        timeRow(session: .dusk, keyPath: \.duskTime)
-                    }
-                    .disabled(!prefs.enabled)
-                    .opacity(prefs.enabled ? 1 : 0.5)
-
-                    // Reading windows
+                    // Reading windows — this is also the reminder clock now.
                     SectionLabel(text: "Reading Windows")
-                    Text("Set when each session can be marked as complete. These windows control eligibility, separate from reminder times.")
+                    Text("Reminders fire the moment each window opens, and escalation calls never ring after it closes — one clock for eligibility and reminders.")
                         .font(.system(size: 12)).foregroundColor(colors.textDim)
                     CardView {
                         windowRow(session: .dawn)
@@ -656,22 +644,6 @@ struct NotificationSettingsModal: View {
         } else {
             return status == .denied
         }
-    }
-
-    private func timeRow(session: Session, keyPath: WritableKeyPath<NotificationPrefs, String>) -> some View {
-        let colors = AdaptivePalette(mode: appearanceMode)
-        return HStack {
-            Label(session.label, systemImage: session.systemImage)
-                .font(.system(size: 14))
-                .foregroundColor(colors.text)
-            Spacer()
-            DatePicker("", selection: Binding(
-                get: { dateFromHHmm(prefs[keyPath: keyPath]) },
-                set: { newDate in update { $0[keyPath: keyPath] = hhmm(from: newDate) } }
-            ), displayedComponents: .hourAndMinute)
-            .labelsHidden()
-        }
-        .padding(.vertical, 6)
     }
 
     private func windowRow(session: Session) -> some View {
