@@ -1,6 +1,19 @@
 import WidgetKit
 import SwiftUI
 
+extension View {
+    @ViewBuilder
+    func widgetBackgroundCompatible() -> some View {
+        if #available(iOS 17.0, macOS 14.0, watchOS 10.0, *) {
+            self.containerBackground(for: .widget) {
+                Color.clear
+            }
+        } else {
+            self
+        }
+    }
+}
+
 struct TenScrollsWidgetEntryView: View {
     var entry: Provider.Entry
     @Environment(\.widgetFamily) var family
@@ -55,6 +68,7 @@ struct WidgetSmallView: View {
             }
             .padding()
         }
+        .widgetBackgroundCompatible()
     }
 }
 
@@ -105,6 +119,7 @@ struct WidgetMediumView: View {
             }
             .padding()
         }
+        .widgetBackgroundCompatible()
     }
 }
 
@@ -119,6 +134,7 @@ struct WidgetAccessoryCircularView: View {
                 Text("\(data.streak)").font(.system(size: 16, weight: .bold, design: .monospaced))
             }
         }
+        .widgetBackgroundCompatible()
     }
 }
 
@@ -143,6 +159,7 @@ struct WidgetAccessoryRectangularView: View {
             }
             .font(.system(size: 12))
         }
+        .widgetBackgroundCompatible()
     }
 }
 

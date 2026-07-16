@@ -171,6 +171,7 @@ struct JournalWidgetSmallView: View {
                 .padding()
             }
         }
+        .widgetBackgroundCompatible()
     }
 }
 
@@ -236,6 +237,7 @@ struct JournalWidgetMediumView: View {
                 .padding()
             }
         }
+        .widgetBackgroundCompatible()
     }
 }
 
@@ -327,6 +329,7 @@ struct JournalWidgetLargeView: View {
                 .padding()
             }
         }
+        .widgetBackgroundCompatible()
     }
 }
 
@@ -336,24 +339,27 @@ struct JournalWidgetAccessoryRectangularView: View {
     let entry: JournalProvider.Entry
     
     var body: some View {
-        if let journalEntry = entry.selectedEntry {
-            VStack(alignment: .leading, spacing: 2) {
+        Group {
+            if let journalEntry = entry.selectedEntry {
+                VStack(alignment: .leading, spacing: 2) {
+                    HStack {
+                        Image(systemName: "book.closed")
+                            .font(.caption2)
+                        Text("Journal")
+                            .font(.caption2.bold())
+                    }
+                    Text(journalEntry.text)
+                        .font(.caption2)
+                        .lineLimit(2)
+                }
+            } else {
                 HStack {
                     Image(systemName: "book.closed")
+                    Text("No journal entries")
                         .font(.caption2)
-                    Text("Journal")
-                        .font(.caption2.bold())
                 }
-                Text(journalEntry.text)
-                    .font(.caption2)
-                    .lineLimit(2)
-            }
-        } else {
-            HStack {
-                Image(systemName: "book.closed")
-                Text("No journal entries")
-                    .font(.caption2)
             }
         }
+        .widgetBackgroundCompatible()
     }
 }

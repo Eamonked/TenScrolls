@@ -33,8 +33,9 @@ struct OpenScrollSessionIntent: LiveActivityIntent {
     }
 }
 
-/// Fired by the stop button. AlarmKit stops the alarm itself, but hooking it
-/// lets us cancel a pending escalation call.
+/// Fired by the stop button on the *escalation call* alarm only. AlarmKit
+/// stops the ringing itself regardless; this hook exists for symmetry/cleanup
+/// but cancelling here is a no-op in practice since the call has already fired.
 struct StopScrollSessionIntent: LiveActivityIntent {
     static var title: LocalizedStringResource = "Stop Alarm"
     static var openAppWhenRun: Bool = false
@@ -48,6 +49,37 @@ struct StopScrollSessionIntent: LiveActivityIntent {
 
     func perform() async throws -> some IntentResult {
         await AlarmScheduler.shared.handleStop(sessionId: sessionId)
+        return .result()
+    }
+}
+
+/// Fired by the stop button on the plain *reminder* alarm. Deliberately does
+/// nothing beyond letting AlarmKit silence the ring.
+///
+/// This used to share `StopScrollSessionIntent` with the escalation call,
+/// which meant swiping "slide to stop" on the reminder — the ordinary way
+/// anyone silences an alarm, whether or not they've done the reading — also
+/// cancelled the pending escalation call. That defeated the whole point of
+/// the escalation: it's supposed to catch exactly the case where someone
+/// dismisses the alarm and doesn't follow through. The escalation call is
+/// correctly cancelled elsewhere, when the session actually completes (see
+/// `AppStore.syncNotifications()`, which recomputes `doneSessionsToday` and
+/// wipes the stale call via `cancelAll()`) — that's the only place stopping
+/// it should be tied to.
+struct DismissReminderIntent: LiveActivityIntent {
+    static var title: LocalizedStringResource = "Dismiss"
+    static var openAppWhenRun: Bool = false
+    static var isDiscoverable: Bool = false  // Not a user-facing shortcut
+
+    @Parameter(title: "Session")
+    var sessionId: String
+
+    init() {}
+    init(sessionId: String) { self.sessionId = sessionId }
+
+    func perform() async throws -> some IntentResult {
+        // Intentionally a no-op. Silencing the reminder is not the same as
+        // completing the session — see the doc comment above.
         return .result()
     }
 }
@@ -214,16 +246,18 @@ final class AlarmScheduler: ObservableObject {
 
         let id = UUID()
         let openIntent = OpenScrollSessionIntent(sessionId: session.rawValue)
-        let stopIntent = StopScrollSessionIntent(sessionId: session.rawValue)
+        // Deliberately NOT StopScrollSessionIntent — see DismissReminderIntent's
+        // doc comment. Silencing this alarm must not cancel the escalation call;
+        // only actually completing the session should do that.
+        let dismissIntent = DismissReminderIntent(sessionId: session.rawValue)
 
         // secondaryIntent is part of AlarmConfiguration initializer
-        // stopIntent wired explicitly to ensure escalation-call cancellation works
         _ = try await AlarmManager.shared.schedule(
             id: id,
             configuration: .init(
                 schedule: .relative(schedule),
                 attributes: attributes,
-                stopIntent: stopIntent,
+                stopIntent: dismissIntent,
                 secondaryIntent: openIntent
             )
         )
@@ -290,8 +324,10 @@ final class AlarmScheduler: ObservableObject {
         let openIntent = OpenScrollSessionIntent(sessionId: session.rawValue)
         let stopIntent = StopScrollSessionIntent(sessionId: session.rawValue)
 
-        // secondaryIntent is part of AlarmConfiguration initializer
-        // stopIntent wired explicitly to ensure escalation-call cancellation works
+        // secondaryIntent is part of AlarmConfiguration initializer.
+        // This alarm — unlike the plain reminder — keeps StopScrollSessionIntent:
+        // by the time someone stops the *call*, it's already fired, so cancelling
+        // here is a harmless cleanup rather than a premature disarm.
         _ = try await AlarmManager.shared.schedule(
             id: id,
             configuration: .init(
@@ -306,8 +342,11 @@ final class AlarmScheduler: ObservableObject {
 
     // MARK: Stop handling
 
-    /// Called from `StopScrollSessionIntent`. If a session was completed,
-    /// cancel that session's escalation call so it doesn't ring later.
+    /// Called from `StopScrollSessionIntent` — i.e. only when the *escalation
+    /// call* itself is stopped, not the plain reminder (see
+    /// `DismissReminderIntent`). By this point the call has already rung, so
+    /// this is just cleanup, not the mechanism that decides whether to escalate.
+    /// The real cancel-on-completion path is `AppStore.syncNotifications()`.
     func handleStop(sessionId: String) async {
         guard let session = Session(rawValue: sessionId) else { return }
         await cancel(idKey(session, call: true))
@@ -330,4 +369,3 @@ extension Color {
     /// scope (AlarmAttributes needs a concrete Color at schedule time).
     static let brassDefault = Color(red: 0.72, green: 0.58, blue: 0.30)
 }
-
