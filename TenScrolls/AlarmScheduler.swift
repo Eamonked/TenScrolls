@@ -218,7 +218,7 @@ final class AlarmScheduler: ObservableObject {
     /// was never tapped. We schedule it eagerly alongside the main alarm and
     /// cancel it from `handleStop` if the user responds in time.
     ///
-    /// IMPORTANT: This uses an absolute (one-time) schedule, not a repeating one.
+    /// IMPORTANT: This uses a fixed (one-time) schedule, not a repeating one.
     /// The escalation is meant to fire only once per day, specific to today's
     /// session. A repeating schedule would cause it to ring every day at that time,
     /// creating unwanted alarms.
@@ -231,8 +231,10 @@ final class AlarmScheduler: ObservableObject {
         let base = Calendar.current.nextDate(after: Date(), matching: comps, matchingPolicy: .nextTime) ?? Date()
         let escalated = base.addingTimeInterval(TimeInterval(afterMinutes * 60))
 
-        // Use absolute schedule (one-time) instead of relative (repeating)
-        let schedule = Alarm.Schedule.Absolute(date: escalated)
+        // Use a fixed (one-time) schedule instead of relative (repeating).
+        // Alarm.Schedule.fixed takes the Date directly — there is no
+        // Alarm.Schedule.Absolute / .Fixed wrapper type.
+        let schedule = Alarm.Schedule.fixed(escalated)
 
         let openButton = AlarmButton(text: "Open the app", textColor: .black, systemImageName: "arrow.right")
 
@@ -257,7 +259,7 @@ final class AlarmScheduler: ObservableObject {
         _ = try await AlarmManager.shared.schedule(
             id: id,
             configuration: .init(
-                schedule: .absolute(schedule),
+                schedule: schedule,
                 attributes: attributes,
                 stopIntent: stopIntent,
                 secondaryIntent: openIntent
