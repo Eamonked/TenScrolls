@@ -160,12 +160,28 @@ final class AlarmScheduler: ObservableObject {
             await cancel(idKey(session))
             await cancel(idKey(session, call: true))
         }
+        // Belt-and-suspenders sweep: if a prior cancel() ever failed silently,
+        // its UUID was already dropped from UserDefaults and we'd otherwise
+        // have no way to find it again — it would sit in AlarmKit's system
+        // store and fire at whatever stale time it was last given. Walking
+        // AlarmManager.shared.alarms (every alarm this app currently owns)
+        // and cancelling all of them here means an orphan from a previous
+        // run gets cleaned up the next time reschedule() runs, instead of
+        // living forever.
+        if let alarms = try? AlarmManager.shared.alarms {
+            for alarm in alarms {
+                _ = try? AlarmManager.shared.cancel(id: alarm.id)
+            }
+        }
     }
 
     private func cancel(_ key: String) async {
         guard let raw = defaults.string(forKey: key), let id = UUID(uuidString: raw) else { return }
-        // cancel(id:) is a throwing call, wrapped with try?
-        _ = try? AlarmManager.shared.cancel(id: id)
+        do {
+            try AlarmManager.shared.cancel(id: id)
+        } catch {
+            print("AlarmScheduler: failed to cancel \(key): \(error)")
+        }
         defaults.removeObject(forKey: key)
     }
 
@@ -225,11 +241,31 @@ final class AlarmScheduler: ObservableObject {
     @discardableResult
     private func scheduleEscalationCall(for session: Session, hhmm: String, afterMinutes: Int) async throws -> UUID {
         let (hour, minute) = Self.parse(hhmm)
-        var comps = DateComponents()
+
+        // Anchor to *today's* occurrence of this session's reminder time —
+        // not "the next time this hour:minute occurs after right now".
+        // syncNotifications() re-runs this every time the app comes to the
+        // foreground (see ContentView's scenePhase handler). Using
+        // nextDate(after: Date(), matching:) meant that opening the app
+        // *after* today's reminder had already passed (e.g. checking the
+        // app at 8pm when dusk is 6pm and dusk isn't done yet) would skip
+        // straight to tomorrow's occurrence — silently cancelling and
+        // re-pushing a still-due escalation call a full day out.
+        var comps = Calendar.current.dateComponents([.year, .month, .day], from: Date())
         comps.hour = hour
         comps.minute = minute
-        let base = Calendar.current.nextDate(after: Date(), matching: comps, matchingPolicy: .nextTime) ?? Date()
-        let escalated = base.addingTimeInterval(TimeInterval(afterMinutes * 60))
+        var base = Calendar.current.date(from: comps) ?? Date()
+        var escalated = base.addingTimeInterval(TimeInterval(afterMinutes * 60))
+
+        // If today's escalation deadline has already fully passed (e.g. the
+        // app is opened at midnight, well after an evening reminder + its
+        // timeout), there's nothing meaningful left to escalate today —
+        // AlarmKit expects a future Date for a fixed schedule. Roll to
+        // tomorrow's occurrence instead of handing it a past date.
+        if escalated <= Date() {
+            base = Calendar.current.date(byAdding: .day, value: 1, to: base) ?? base
+            escalated = base.addingTimeInterval(TimeInterval(afterMinutes * 60))
+        }
 
         // Use a fixed (one-time) schedule instead of relative (repeating).
         // Alarm.Schedule.fixed takes the Date directly — there is no
@@ -294,3 +330,4 @@ extension Color {
     /// scope (AlarmAttributes needs a concrete Color at schedule time).
     static let brassDefault = Color(red: 0.72, green: 0.58, blue: 0.30)
 }
+
