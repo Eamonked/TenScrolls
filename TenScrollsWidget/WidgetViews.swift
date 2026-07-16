@@ -11,9 +11,15 @@ struct TenScrollsWidgetEntryView: View {
             WidgetSmallView(data: entry.data)
         case .systemMedium:
             WidgetMediumView(data: entry.data)
+        case .systemLarge:
+            WidgetMediumView(data: entry.data)
+        case .systemExtraLarge:
+            WidgetMediumView(data: entry.data)
         case .accessoryCircular:
             WidgetAccessoryCircularView(data: entry.data)
         case .accessoryRectangular:
+            WidgetAccessoryRectangularView(data: entry.data)
+        case .accessoryInline:
             WidgetAccessoryRectangularView(data: entry.data)
         @unknown default:
             WidgetSmallView(data: entry.data)

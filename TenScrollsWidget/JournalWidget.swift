@@ -96,7 +96,13 @@ struct JournalWidgetEntryView: View {
             JournalWidgetMediumView(entry: entry)
         case .systemLarge:
             JournalWidgetLargeView(entry: entry)
+        case .systemExtraLarge:
+            JournalWidgetLargeView(entry: entry)
+        case .accessoryCircular:
+            JournalWidgetAccessoryRectangularView(entry: entry)
         case .accessoryRectangular:
+            JournalWidgetAccessoryRectangularView(entry: entry)
+        case .accessoryInline:
             JournalWidgetAccessoryRectangularView(entry: entry)
         @unknown default:
             JournalWidgetSmallView(entry: entry)
