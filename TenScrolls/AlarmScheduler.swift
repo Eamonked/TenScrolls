@@ -7,6 +7,7 @@ import Combine
 
 // MARK: - Metadata passed into the Live Activity / alert
 
+@available(iOS 26, *)
 struct ScrollAlarmMetadata: AlarmMetadata {
     var sessionId: String   // Session.rawValue ("dawn" / "midday" / "dusk")
     var isEscalationCall: Bool
@@ -15,6 +16,7 @@ struct ScrollAlarmMetadata: AlarmMetadata {
 // MARK: - App Intents fired from the alert's buttons
 
 /// Fired by the "Open the app" secondary button.
+@available(iOS 26.1, *)
 struct OpenScrollSessionIntent: LiveActivityIntent {
     static var title: LocalizedStringResource = "Open Ten Scrolls"
     static var openAppWhenRun: Bool = true
@@ -36,6 +38,7 @@ struct OpenScrollSessionIntent: LiveActivityIntent {
 /// Fired by the stop button on the *escalation call* alarm only. AlarmKit
 /// stops the ringing itself regardless; this hook exists for symmetry/cleanup
 /// but cancelling here is a no-op in practice since the call has already fired.
+@available(iOS 26.1, *)
 struct StopScrollSessionIntent: LiveActivityIntent {
     static var title: LocalizedStringResource = "Stop Alarm"
     static var openAppWhenRun: Bool = false
@@ -66,6 +69,7 @@ struct StopScrollSessionIntent: LiveActivityIntent {
 /// `AppStore.syncNotifications()`, which recomputes `doneSessionsToday` and
 /// wipes the stale call via `cancelAll()`) — that's the only place stopping
 /// it should be tied to.
+@available(iOS 26, *)
 struct DismissReminderIntent: LiveActivityIntent {
     static var title: LocalizedStringResource = "Dismiss"
     static var openAppWhenRun: Bool = false
@@ -103,7 +107,7 @@ struct TenScrollsShortcuts: AppShortcutsProvider {
 ///
 /// The old `NotificationManager` is kept for pre-iOS 26 fallback — see
 /// `AppStore` for the `#available` branching.
-@available(iOS 26, *)
+@available(iOS 26.1, *)
 @MainActor
 final class AlarmScheduler: ObservableObject {
     static let shared = AlarmScheduler()

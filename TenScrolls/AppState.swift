@@ -1,6 +1,6 @@
 import Foundation
 
-struct AppState: Codable, Equatable {
+struct AppState: Codable, Equatable, Sendable {
     var scrolls: [Scroll]
     var log: [String: DayEntry] = [:]
     var journal: [JournalEntry] = []

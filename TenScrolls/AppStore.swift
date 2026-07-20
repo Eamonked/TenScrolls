@@ -71,8 +71,20 @@ final class AppStore: ObservableObject {
 
     /// Rebuild scheduled notifications from current prefs + today's progress. Cheap and
     /// idempotent; call it after session changes, pref changes, and on foreground.
+    ///
+    /// Branches on OS version: AlarmKit (`AlarmScheduler`) on iOS 26+, the old
+    /// calendar-notification path (`notifier`) below that. `AlarmScheduler.reschedule`
+    /// is async, so this stays a fire-and-forget `Task` here rather than making every
+    /// caller of `syncNotifications()` async too — matches the previous fire-and-forget
+    /// behavior of the `notifier` path.
     func syncNotifications() {
-        reminders.reschedule(from: state.notifPrefs, doneSessions: doneSessionsToday)
+        if #available(iOS 26.1, *) {
+            let prefs = state.notifPrefs
+            let done = doneSessionsToday
+            Task { await AlarmScheduler.shared.reschedule(from: prefs, doneSessions: done) }
+        } else {
+            notifier.reschedule(prefs: state.notifPrefs, doneSessions: doneSessionsToday)
+        }
     }
 
     func updateNotifPrefs(_ prefs: NotificationPrefs) {
@@ -89,7 +101,12 @@ final class AppStore: ObservableObject {
     /// Toggles reminders, requesting system permission first when turning them on.
     func setNotificationsEnabled(_ enabled: Bool) async {
         if enabled {
-            let granted = await reminders.requestAuthorizationIfNeeded()
+            let granted: Bool
+            if #available(iOS 26.1, *) {
+                granted = await AlarmScheduler.shared.requestAuthorizationIfNeeded()
+            } else {
+                granted = await notifier.requestAuthorization()
+            }
             guard granted else { return }
         }
         var prefs = state.notifPrefs
@@ -100,9 +117,11 @@ final class AppStore: ObservableObject {
     /// Check if the app was launched from an AlarmKit "Open the app" intent
     /// (iOS 26+ only — a no-op below that). If so, route to the Today tab.
     func checkPendingAlarmSession() {
-        if reminders.consumePendingAlarmSession() {
-            selectedTab = 0
-        }
+        guard #available(iOS 26.1, *) else { return }
+        let key = AlarmScheduler.pendingSessionDefaultsKey
+        guard UserDefaults.standard.string(forKey: key) != nil else { return }
+        UserDefaults.standard.removeObject(forKey: key)
+        selectedTab = 0
     }
 
     /// Accept the incoming call: dismiss it and land on the Today tab.
@@ -345,7 +364,12 @@ final class AppStore: ObservableObject {
         
         // Cancel the escalation call immediately when a session is completed
         if !wasSet && entry[keyPath: session] {
-            reminders.cancelEscalationCall(for: sessionType)
+            if #available(iOS 26.1, *) {
+                let rawSession = sessionType.rawValue
+                Task { await AlarmScheduler.shared.handleStop(sessionId: rawSession) }
+            } else {
+                notifier.cancelEscalationCall(for: sessionType)
+            }
         }
         
         syncNotifications() // completing a session cancels its pending escalation call

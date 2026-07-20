@@ -619,7 +619,7 @@ struct NotificationSettingsModal: View {
         }
         .presentationDetents([.large])
         .task {
-            if #available(iOS 26, *) {
+            if #available(iOS 26.1, *) {
                 await AlarmScheduler.shared.refreshAuthorizationState()
                 alarmAuthDenied = AlarmScheduler.shared.authorizationState == .denied
             } else {
@@ -630,7 +630,7 @@ struct NotificationSettingsModal: View {
 
     /// Whether authorization is granted (works across both paths).
     private var isAuthorized: Bool {
-        if #available(iOS 26, *) {
+        if #available(iOS 26.1, *) {
             return !alarmAuthDenied && AlarmScheduler.shared.authorizationState == .authorized
         } else {
             return status == .authorized
