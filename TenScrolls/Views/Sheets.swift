@@ -196,7 +196,14 @@ struct ScrollEditorSheet: View {
                     // can be highlighted (Add to Journal) and tapped (bookmark
                     // where reading stopped) independently.
                     if !notes.isEmpty {
-                        VStack(alignment: .leading, spacing: 22) {
+                        // Lazy: only paragraphs actually on/near screen get a real
+                        // UITextView instantiated. A plain VStack here would build
+                        // every paragraph up front — fine for a normal scroll, but
+                        // an imported document with thousands of paragraphs would
+                        // spike memory building all of them at once. See also the
+                        // size guard in DocumentImportSheet, which keeps something
+                        // book-length from landing in a single scroll to begin with.
+                        LazyVStack(alignment: .leading, spacing: 22) {
                             ForEach(Array(scroll.paragraphs.enumerated()), id: \.offset) { index, paragraph in
                                 paragraphBlock(paragraph, index: index)
                                     .id(index)

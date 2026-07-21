@@ -28,6 +28,18 @@ struct AppState: Codable, Equatable, Sendable {
     /// Non-nil once the reader has begun rereading after mastering all ten scrolls.
     var cycleState: CycleState? = nil
 
+    /// Library shelf: lightweight metadata only (title/author/bookmark) for
+    /// full-length books imported outside the ten scrolls. The actual book
+    /// text never lives here — see `LibraryStore` — so a multi-megabyte book
+    /// never bloats this struct, which gets JSON-encoded into UserDefaults on
+    /// every mutation. Optional for backward compatibility (a missing key
+    /// decodes to nil rather than throwing and wiping progress).
+    var library: [LibraryIndexEntry]? = nil
+    var libraryBooks: [LibraryIndexEntry] {
+        get { library ?? [] }
+        set { library = newValue }
+    }
+
     /// Reminder settings with sane defaults when none have been persisted yet.
     var notifPrefs: NotificationPrefs { notifications ?? NotificationPrefs() }
     /// Reading window settings with defaults when none have been persisted yet.

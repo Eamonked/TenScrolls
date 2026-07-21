@@ -4,6 +4,7 @@ struct ScrollsView: View {
     @EnvironmentObject var store: AppStore
     @Environment(\.appearanceMode) var appearanceMode
     var onOpenScroll: (Int) -> Void
+    var openLibrary: () -> Void = {}
 
     var theme: ThemeOption { Palette.theme(for: store.state.activeThemeId) }
 
@@ -25,12 +26,51 @@ struct ScrollsView: View {
                             onOpenScroll(scroll.id)
                         }
                 }
+
+                LibraryEntryRow(bookCount: store.state.libraryBooks.count, theme: theme, colors: colors)
+                    .padding(.top, 4)
+                    .onTapGesture { openLibrary() }
+
                 Color.clear.frame(height: 10)
             }
             .padding(.horizontal, 20)
             .padding(.top, 10)
         }
         .background(colors.background)
+    }
+}
+
+/// Entry point into the Library — kept visually distinct from the ScrollRows
+/// above it (no roman numeral, book icon instead) so it reads as "a
+/// different shelf," not an eleventh scroll.
+private struct LibraryEntryRow: View {
+    let bookCount: Int
+    let theme: ThemeOption
+    let colors: AdaptivePalette
+
+    var body: some View {
+        HStack(spacing: 13) {
+            ZStack {
+                Circle()
+                    .fill(colors.ink2)
+                    .overlay(Circle().stroke(colors.inkLine, lineWidth: 1.5))
+                    .frame(width: 42, height: 42)
+                Image(systemName: "books.vertical")
+                    .font(.system(size: 15))
+                    .foregroundColor(theme.brass)
+            }
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Library").font(.system(size: 14.5, weight: .semibold)).foregroundColor(colors.text)
+                Text((bookCount == 0 ? "Full books to read alongside your scrolls" : "\(bookCount) book\(bookCount == 1 ? "" : "s")").uppercased())
+                    .font(AppFont.mono(10.5)).foregroundColor(colors.textFaint)
+            }
+            Spacer()
+            Image(systemName: "chevron.right").font(.system(size: 13)).foregroundColor(colors.textFaint)
+        }
+        .padding(14)
+        .background(colors.ink2)
+        .overlay(RoundedRectangle(cornerRadius: 16).stroke(colors.inkLine, lineWidth: 1))
+        .clipShape(RoundedRectangle(cornerRadius: 16))
     }
 }
 

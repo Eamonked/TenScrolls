@@ -503,6 +503,39 @@ final class AppStore: ObservableObject {
         afterMutation()
     }
 
+    // MARK: - Library
+
+    /// Adds a whole imported document as a book on the library shelf, rather
+    /// than into a scroll. The full text is written straight to its own file
+    /// via `LibraryStore` — never through `state`/`persist` — so however big
+    /// the book is, it can't bloat the UserDefaults blob the rest of the app
+    /// state rides in. Only the small `LibraryIndexEntry` (title/chapter
+    /// count) joins `state.library`.
+    func addBookToLibrary(filename: String, chunks: [String], titles: [String?]) throws {
+        let (book, index) = Book.from(filename: filename, chunks: chunks, titles: titles)
+        try LibraryStore.save(book)
+        state.libraryBooks.append(index)
+        afterMutation()
+    }
+
+    /// Removes a book: drops its metadata from state and deletes its file on
+    /// disk. Irreversible — callers should confirm with the user first.
+    func removeBook(_ id: UUID) {
+        state.libraryBooks.removeAll { $0.id == id }
+        LibraryStore.delete(id)
+        afterMutation()
+    }
+
+    /// Records where the reader stopped in a book. Only touches the small
+    /// index entry in `state` — the book's own file on disk is never
+    /// rewritten just to bookmark a reading position.
+    func setLibraryBookmark(bookId: UUID, chapterIndex: Int, paragraphIndex: Int?) {
+        guard let idx = state.libraryBooks.firstIndex(where: { $0.id == bookId }) else { return }
+        state.libraryBooks[idx].bookmarkChapterIndex = chapterIndex
+        state.libraryBooks[idx].bookmarkParagraphIndex = paragraphIndex
+        afterMutation()
+    }
+
     func addJournalEntry(_ text: String) {
         addJournalEntry(text, scrollId: state.activeScroll?.id)
     }
@@ -559,6 +592,12 @@ final class AppStore: ObservableObject {
     }
 
     func resetAll() {
+        // The index entries are about to be wiped along with the rest of
+        // state — delete the books' files too, or they'd sit on disk
+        // forever with nothing left pointing at them.
+        for entry in state.libraryBooks {
+            LibraryStore.delete(entry.id)
+        }
         state = AppState.defaultState()
         afterMutation()
     }

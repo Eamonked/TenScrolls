@@ -7,6 +7,7 @@ enum ActiveSheet: Identifiable {
     case notifSettings
     case skipReason(date: String, isMissedDay: Bool)
     case search
+    case library
 
     var id: String {
         switch self {
@@ -16,6 +17,7 @@ enum ActiveSheet: Identifiable {
         case .notifSettings: return "notif"
         case .skipReason(let d, _): return "skip-\(d)"
         case .search: return "search"
+        case .library: return "library"
         }
     }
 }
@@ -53,7 +55,7 @@ struct ContentView: View {
                         if let scroll = store.state.scrolls.first(where: { $0.id == id }) {
                             activeSheet = .scrollEditor(scroll)
                         }
-                    })
+                    }, openLibrary: { activeSheet = .library })
                     .hideNavigationBar()
                 }
                 .tabItem { Label("Scrolls", systemImage: "scroll") }
@@ -175,6 +177,8 @@ struct ContentView: View {
             SearchView { scroll in
                 activeSheet = .scrollEditor(scroll)
             }
+        case .library:
+            LibraryView()
         }
     }
 

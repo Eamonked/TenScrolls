@@ -15,7 +15,11 @@ struct SelectableParagraphView: UIViewRepresentable {
     let fontSize: CGFloat
     let textColor: UIColor
     let lineSpacing: CGFloat
-    var onAddToJournal: (String) -> Void
+    /// Nil when the caller has nowhere to send a quoted excerpt (e.g. Library
+    /// books, which aren't tied to a scroll) — the "Add to Journal" item is
+    /// simply left out of the selection menu in that case, rather than
+    /// present but inert.
+    var onAddToJournal: ((String) -> Void)? = nil
     var onTapped: () -> Void
 
     func makeUIView(context: Context) -> ParagraphTextView {
@@ -94,13 +98,14 @@ final class ParagraphTextView: UITextView {
     var onAddToJournal: ((String) -> Void)?
 
     override func editMenu(for textRange: UITextRange, suggestedActions: [UIMenuElement]) -> UIMenu? {
-        guard let selectedRange = selectedTextRange,
+        guard let onAddToJournal,
+              let selectedRange = selectedTextRange,
               let excerpt = text(in: selectedRange)?.trimmingCharacters(in: .whitespacesAndNewlines),
               !excerpt.isEmpty else {
             return super.editMenu(for: textRange, suggestedActions: suggestedActions)
         }
         let addToJournal = UIAction(title: "Add to Journal", image: UIImage(systemName: "book")) { [weak self] _ in
-            self?.onAddToJournal?(excerpt)
+            onAddToJournal(excerpt)
             self?.selectedTextRange = nil
         }
         return UIMenu(children: [addToJournal] + suggestedActions)

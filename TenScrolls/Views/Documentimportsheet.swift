@@ -6,6 +6,12 @@ struct DocumentImportSheet: View {
     @Environment(\.appearanceMode) var appearanceMode
     @Environment(\.dismiss) private var dismiss
 
+    /// Which destination to preselect when the sheet opens — the Progress
+    /// tab's general "Import Document" entry point defaults to spreading
+    /// across all ten scrolls, while the Library's "Add a Book" button opens
+    /// straight into `.library`.
+    var defaultDestination: Destination = .allTen
+
     private struct ParsedDocument {
         let filename: String
         /// Ordered natural chunks — EPUB chapters, or PDF pages.
@@ -20,15 +26,25 @@ struct DocumentImportSheet: View {
         case failed(String)
     }
 
-    private enum Destination: String, CaseIterable, Hashable {
+    enum Destination: String, CaseIterable, Hashable {
         case singleScroll = "One scroll"
         case allTen = "All ten scrolls"
+        case library = "New book"
     }
+
+    /// A single scroll is meant to hold a stack of short daily readings, not
+    /// an entire book — cramming a whole novel's worth of paragraphs in
+    /// unsplit is what caused imports to crash with an out-of-memory kill
+    /// (every paragraph becomes its own live text view when the scroll is
+    /// opened). Anything at or above this word count is book-length and gets
+    /// steered toward the Library instead, where it's paginated properly.
+    private static let singleScrollWordCap = 20_000
 
     @State private var stage: Stage = .pickFile
     @State private var showFilePicker = false
     @State private var destination: Destination = .allTen
     @State private var selectedScrollId: Int?
+    @State private var importError: String?
 
     var theme: ThemeOption { Palette.theme(for: store.state.activeThemeId) }
 
@@ -55,7 +71,18 @@ struct DocumentImportSheet: View {
             allowedContentTypes: [.pdf, epubType],
             onCompletion: handlePickedFile
         )
-        .onAppear { showFilePicker = true }
+        .onAppear {
+            destination = defaultDestination
+            showFilePicker = true
+        }
+        .alert("Couldn't add that book", isPresented: Binding(
+            get: { importError != nil },
+            set: { if !$0 { importError = nil } }
+        )) {
+            Button("OK", role: .cancel) { importError = nil }
+        } message: {
+            Text(importError ?? "")
+        }
     }
 
     private var epubType: UTType {
@@ -111,10 +138,12 @@ struct DocumentImportSheet: View {
 
     private func configureView(_ doc: ParsedDocument) -> some View {
         let colors = AdaptivePalette(mode: appearanceMode)
+        let wordCount = totalWordCount(doc)
+        let isBookLength = wordCount >= Self.singleScrollWordCap
         return Form {
             Section("Source") {
                 Text(doc.filename).foregroundColor(colors.text)
-                Text("\(doc.chunks.count) section\(doc.chunks.count == 1 ? "" : "s") found")
+                Text("\(doc.chunks.count) section\(doc.chunks.count == 1 ? "" : "s") found · about \(wordCount.formatted()) words")
                     .font(.system(size: 12))
                     .foregroundColor(colors.textFaint)
             }
@@ -135,7 +164,16 @@ struct DocumentImportSheet: View {
                 }
             }
 
-            if let warning = overwriteWarning {
+            if destination == .singleScroll && isBookLength {
+                Section {
+                    Label(
+                        "This is book-length (about \(wordCount.formatted()) words) — too much for a single scroll to hold and stay readable. Use “New book” to add it to your Library instead.",
+                        systemImage: "exclamationmark.triangle"
+                    )
+                    .font(.system(size: 12.5))
+                    .foregroundColor(colors.red)
+                }
+            } else if let warning = overwriteWarning {
                 Section {
                     Label(warning, systemImage: "exclamationmark.triangle")
                         .font(.system(size: 12.5))
@@ -145,14 +183,26 @@ struct DocumentImportSheet: View {
 
             Section {
                 Button("Import") { apply(doc) }
-                    .disabled(destination == .singleScroll && selectedScrollId == nil)
+                    .disabled(
+                        (destination == .singleScroll && (selectedScrollId == nil || isBookLength))
+                    )
             }
         }
         .onAppear {
             if selectedScrollId == nil {
                 selectedScrollId = store.state.activeScroll?.id ?? store.state.scrolls.first?.id
             }
+            // A book-length document dropped in with "One scroll" still
+            // selected would just hit the disabled Import button with no
+            // clear next step — steer it to the Library automatically.
+            if isBookLength && destination == .singleScroll {
+                destination = .library
+            }
         }
+    }
+
+    private func totalWordCount(_ doc: ParsedDocument) -> Int {
+        doc.chunks.reduce(0) { $0 + $1.split(separator: " ").count }
     }
 
     private var overwriteWarning: String? {
@@ -165,6 +215,8 @@ struct DocumentImportSheet: View {
         case .allTen:
             guard store.state.scrolls.contains(where: { !$0.notes.isEmpty }) else { return nil }
             return "This will replace notes on any scroll that already has them."
+        case .library:
+            return nil
         }
     }
 
@@ -214,10 +266,18 @@ struct DocumentImportSheet: View {
             let text = doc.chunks.joined(separator: "\n\n")
             let title = doc.titles.compactMap { $0 }.first
             store.importDocument(text: text, title: title, intoScrollId: id)
+            dismiss()
         case .allTen:
             let buckets = DocumentSplitter.distribute(doc.chunks, into: 10)
             store.importDocumentAcrossAllScrolls(buckets)
+            dismiss()
+        case .library:
+            do {
+                try store.addBookToLibrary(filename: doc.filename, chunks: doc.chunks, titles: doc.titles)
+                dismiss()
+            } catch {
+                importError = (error as? LocalizedError)?.errorDescription ?? "Something went wrong saving this book."
+            }
         }
-        dismiss()
     }
 }
