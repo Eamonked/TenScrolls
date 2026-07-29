@@ -23,7 +23,7 @@ final class AppStore: ObservableObject {
     private static let persistDebounceNanoseconds: UInt64 = 350_000_000
 
     private nonisolated let defaultsKey = "ten-scrolls-state"
-    let leaderboard = CloudKitLeaderboard()
+    let leaderboard = SupabaseLeaderboard()
     let notifier = NotificationManager()
 
     init() {
@@ -263,7 +263,19 @@ final class AppStore: ObservableObject {
             mastered: state.scrolls.filter { $0.status == .mastered }.count,
             lastActive: Date()
         )
-        Task { await leaderboard.publish(code: state.traderCode, snapshot: snapshot) }
+        let preferredCode = state.traderCode
+        let name = state.traderName
+        Task {
+            // Reserves preferredCode server-side, or a freshly generated one if
+            // another device already claimed it. Only the first successful
+            // claim actually changes anything locally on subsequent calls.
+            let confirmedCode = await leaderboard.claimIdentity(preferredCode: preferredCode, name: name)
+            if confirmedCode != state.traderCode {
+                state.traderCode = confirmedCode
+                schedulePersist()
+            }
+            await leaderboard.publish(code: confirmedCode, snapshot: snapshot)
+        }
     }
 
     // MARK: - Mutations
