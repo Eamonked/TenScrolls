@@ -15,11 +15,19 @@ struct SelectableParagraphView: UIViewRepresentable {
     let fontSize: CGFloat
     let textColor: UIColor
     let lineSpacing: CGFloat
+    /// Justified + hyphenated body text, the way Apple Books sets its pages,
+    /// rather than the ragged right edge a plain left-aligned flow leaves.
+    var justified: Bool = true
     /// Nil when the caller has nowhere to send a quoted excerpt (e.g. Library
     /// books, which aren't tied to a scroll) — the "Add to Journal" item is
     /// simply left out of the selection menu in that case, rather than
     /// present but inert.
     var onAddToJournal: ((String) -> Void)? = nil
+    /// Nil wherever turning a selection into its own scroll doesn't make
+    /// sense (e.g. inside a scroll's own reading view — a scroll can't
+    /// become a scroll). Present only in the Library reader, where a
+    /// highlighted passage can be promoted to Scroll {N}.
+    var onSaveAsScroll: ((String) -> Void)? = nil
     var onTapped: () -> Void
 
     func makeUIView(context: Context) -> ParagraphTextView {
@@ -45,6 +53,7 @@ struct SelectableParagraphView: UIViewRepresentable {
     func updateUIView(_ uiView: ParagraphTextView, context: Context) {
         context.coordinator.onTapped = onTapped
         uiView.onAddToJournal = onAddToJournal
+        uiView.onSaveAsScroll = onSaveAsScroll
         applyText(to: uiView)
     }
 
@@ -61,6 +70,12 @@ struct SelectableParagraphView: UIViewRepresentable {
     private func applyText(to view: ParagraphTextView) {
         let style = NSMutableParagraphStyle()
         style.lineSpacing = lineSpacing
+        if justified {
+            style.alignment = .justified
+            // Full hyphenation keeps justified lines from opening ugly gaps
+            // between words — the same typesetting trick Apple Books uses.
+            style.hyphenationFactor = 1.0
+        }
         let font = serifFont(size: fontSize)
         let attributed = NSAttributedString(string: text, attributes: [
             .font: font,
@@ -72,6 +87,7 @@ struct SelectableParagraphView: UIViewRepresentable {
             view.attributedText = attributed
         }
         view.onAddToJournal = onAddToJournal
+        view.onSaveAsScroll = onSaveAsScroll
     }
 
     private func serifFont(size: CGFloat) -> UIFont {
@@ -96,18 +112,31 @@ struct SelectableParagraphView: UIViewRepresentable {
 /// selection menu when there's an active, non-empty selection.
 final class ParagraphTextView: UITextView {
     var onAddToJournal: ((String) -> Void)?
+    var onSaveAsScroll: ((String) -> Void)?
 
     override func editMenu(for textRange: UITextRange, suggestedActions: [UIMenuElement]) -> UIMenu? {
-        guard let onAddToJournal,
+        guard (onAddToJournal != nil || onSaveAsScroll != nil),
               let selectedRange = selectedTextRange,
               let excerpt = text(in: selectedRange)?.trimmingCharacters(in: .whitespacesAndNewlines),
               !excerpt.isEmpty else {
             return super.editMenu(for: textRange, suggestedActions: suggestedActions)
         }
-        let addToJournal = UIAction(title: "Add to Journal", image: UIImage(systemName: "book")) { [weak self] _ in
-            onAddToJournal(excerpt)
-            self?.selectedTextRange = nil
+        var extra: [UIMenuElement] = []
+        if let onSaveAsScroll {
+            // Listed above "Add to Journal": turning a passage into a scroll
+            // is the bigger commitment (it becomes daily practice material),
+            // so it gets the more prominent position.
+            extra.append(UIAction(title: "Save as Scroll", image: UIImage(systemName: "scroll")) { [weak self] _ in
+                onSaveAsScroll(excerpt)
+                self?.selectedTextRange = nil
+            })
         }
-        return UIMenu(children: [addToJournal] + suggestedActions)
+        if let onAddToJournal {
+            extra.append(UIAction(title: "Add to Journal", image: UIImage(systemName: "book")) { [weak self] _ in
+                onAddToJournal(excerpt)
+                self?.selectedTextRange = nil
+            })
+        }
+        return UIMenu(children: extra + suggestedActions)
     }
 }

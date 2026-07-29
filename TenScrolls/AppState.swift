@@ -28,6 +28,11 @@ struct AppState: Codable, Equatable, Sendable {
     /// Non-nil once the reader has begun rereading after mastering all ten scrolls.
     var cycleState: CycleState? = nil
 
+    /// Reading text-size preference (Scrolls and Library reading views share this,
+    /// mirroring Apple Books' single "Aa" size control). Optional for backward
+    /// compatibility; 1.0 is the unscaled default size.
+    var storedReadingFontScale: Double? = nil
+
     /// Library shelf: lightweight metadata only (title/author/bookmark) for
     /// full-length books imported outside the ten scrolls. The actual book
     /// text never lives here — see `LibraryStore` — so a multi-megabyte book
@@ -48,6 +53,14 @@ struct AppState: Codable, Equatable, Sendable {
     var appearanceMode: AppearanceMode {
         get { storedAppearanceMode ?? .dark }
         set { storedAppearanceMode = newValue }
+    }
+
+    /// Reading font-size multiplier applied on top of each reading view's base
+    /// sizes, clamped to a sane range so a corrupted/older value never renders
+    /// illegibly small or huge text.
+    var readingFontScale: Double {
+        get { min(1.6, max(0.8, storedReadingFontScale ?? 1.0)) }
+        set { storedReadingFontScale = min(1.6, max(0.8, newValue)) }
     }
 
     static func defaultState() -> AppState {

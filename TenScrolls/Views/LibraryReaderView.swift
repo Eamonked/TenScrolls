@@ -2,9 +2,21 @@ import SwiftUI
 
 /// Reads one book from the shelf. The book's full text is loaded from disk
 /// only when this view appears, and released again once it's dismissed —
-/// `AppState`/`AppStore` never hold it. Paragraphs render the same lazy,
-/// one-`UITextView`-per-visible-paragraph way scrolls do, chapter by
-/// chapter, so even a very long book stays light in memory.
+/// `AppState`/`AppStore` never hold it.
+///
+/// Reading goes through `BookChapterWebView` (CSS-column pagination inside a
+/// `WKWebView`) for every book — EPUB chapters render their real HTML;
+/// chapters with no native markup (PDF imports) fall back to plain
+/// `<p>`-wrapped paragraphs via `chapterHTML(for:)`, so the reading engine
+/// never has to branch on where a book came from. One chapter is loaded at
+/// a time; swiping past its last/first page lands on the next/previous
+/// chapter's first/last page via `onRequestNextChapter`/`onRequestPreviousChapter`.
+///
+/// Chrome (nav bar title, "Aa" size control, table of contents, bottom
+/// progress bar) is modeled on Apple Books: a small chapter-name title while
+/// reading, one shared text-size control, a proper contents list instead of
+/// a bare menu, and a thin progress track + "Chapter N of M · Page X of Y"
+/// readout pinned to the bottom.
 struct LibraryReaderView: View {
     @EnvironmentObject var store: AppStore
     @Environment(\.appearanceMode) var appearanceMode
@@ -13,19 +25,46 @@ struct LibraryReaderView: View {
 
     @State private var book: Book?
     @State private var loadError: String?
-    @State private var chapterIndex: Int = 0
+    @State private var showFontControl = false
+    @State private var showTableOfContents = false
+
+    // Highlight actions: set when the reader picks "Add to Journal" or "Save
+    // as Scroll" from a text selection; presenting the matching sheet is
+    // driven off these, the same pattern the Scroll reading view uses.
+    @State private var pendingJournalExcerpt: String?
+    @State private var pendingScrollExcerpt: String?
+    /// Set only when `pendingScrollExcerpt` came from "Make this chapter a
+    /// Scroll" (so the chapter's own title can prefill the destination
+    /// sheet); left nil for a plain text-selection excerpt, which has no
+    /// natural title of its own.
+    @State private var pendingScrollSuggestedTitle: String?
+
+    // MARK: WKWebView reading state
+    @State private var htmlCurrentChapterIndex: Int = 0
+    @State private var htmlCurrentPage: Int = 0
+    @State private var htmlPageCount: Int = 1
+    /// A fraction to restore the next time the currently-loading chapter
+    /// settles — set when jumping to a new chapter (table of contents, a
+    /// swipe past a chapter edge, or the initial saved bookmark) and left
+    /// alone otherwise, so `BookChapterWebView` can tell a genuine jump
+    /// apart from a same-chapter reload (rotation, font size, theme).
+    @State private var htmlInitialFraction: Double? = nil
+    @State private var htmlProxy = BookWebReaderProxy()
 
     var theme: ThemeOption { Palette.theme(for: store.state.activeThemeId) }
+    private var fontScale: CGFloat { CGFloat(store.state.readingFontScale) }
 
     private var indexEntry: LibraryIndexEntry? {
         store.state.libraryBooks.first { $0.id == bookId }
     }
 
+    private var currentChapterIndex: Int { htmlCurrentChapterIndex }
+
     var body: some View {
         let colors = AdaptivePalette(mode: appearanceMode)
         Group {
             if let book {
-                readingView(book, colors: colors)
+                readingViewHTML(book, colors: colors)
             } else if let loadError {
                 errorView(loadError, colors: colors)
             } else {
@@ -33,22 +72,91 @@ struct LibraryReaderView: View {
             }
         }
         .background(colors.background)
-        .navigationTitle(book?.title ?? fallbackTitle)
+        .navigationTitle(navigationTitleText)
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
             if let book, book.chapters.count > 1 {
                 ToolbarItem(placement: .navigationBarTrailing) {
-                    Menu {
-                        ForEach(Array(book.chapters.enumerated()), id: \.offset) { i, chapter in
-                            Button(chapterLabel(chapter, index: i)) { chapterIndex = i }
-                        }
+                    Button {
+                        showTableOfContents = true
                     } label: {
                         Image(systemName: "list.bullet")
                     }
                 }
             }
+            ToolbarItem(placement: .navigationBarTrailing) {
+                Button {
+                    showFontControl = true
+                } label: {
+                    Text("Aa").font(.system(size: 15, weight: .semibold, design: .serif))
+                }
+                .popover(isPresented: $showFontControl) {
+                    ReadingFontSizeControl(
+                        scale: Binding(
+                            get: { store.state.readingFontScale },
+                            set: { store.setReadingFontScale($0) }
+                        ),
+                        brass: theme.brass
+                    )
+                    .presentationCompactAdaptation(.popover)
+                }
+            }
+        }
+        .sheet(isPresented: $showTableOfContents) {
+            if let book {
+                BookTableOfContentsSheet(
+                    book: book,
+                    currentChapterIndex: currentChapterIndex,
+                    brass: theme.brass,
+                    onSelect: { index in
+                        htmlInitialFraction = 0
+                        htmlCurrentChapterIndex = index
+                        showTableOfContents = false
+                    },
+                    onMakeScroll: { index in
+                        guard let chapter = book.chapters[safe: index] else { return }
+                        pendingScrollExcerpt = chapter.paragraphs.joined(separator: "\n\n")
+                        pendingScrollSuggestedTitle = chapter.title
+                        showTableOfContents = false
+                    }
+                )
+            }
+        }
+        .sheet(isPresented: Binding(
+            get: { pendingJournalExcerpt != nil },
+            set: { if !$0 { pendingJournalExcerpt = nil } }
+        )) {
+            if let excerpt = pendingJournalExcerpt, let book {
+                JournalComposerSheet(scroll: nil, initialText: quotedExcerpt(excerpt, book: book)) { entryText in
+                    store.addJournalEntry(entryText, scrollId: nil, bookTitle: book.title)
+                    pendingJournalExcerpt = nil
+                }
+            }
+        }
+        .sheet(isPresented: Binding(
+            get: { pendingScrollExcerpt != nil },
+            set: { if !$0 { pendingScrollExcerpt = nil } }
+        )) {
+            if let excerpt = pendingScrollExcerpt {
+                ScrollDestinationSheet(text: excerpt, suggestedTitle: pendingScrollSuggestedTitle) {
+                    pendingScrollExcerpt = nil
+                    pendingScrollSuggestedTitle = nil
+                }
+            }
         }
         .task { await load() }
+    }
+
+    /// Mirrors Apple Books: the small nav-bar title reads as the current
+    /// chapter while there's more than one, and falls back to the book's own
+    /// title for single-chapter books (or before anything has loaded).
+    private var navigationTitleText: String {
+        guard let book else { return fallbackTitle }
+        guard book.chapters.count > 1, let chapter = book.chapters[safe: currentChapterIndex],
+              let title = chapter.title, !title.isEmpty else {
+            return book.title
+        }
+        return title
     }
 
     private func loadingView(_ colors: AdaptivePalette) -> some View {
@@ -72,121 +180,137 @@ struct LibraryReaderView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
-    private func readingView(_ book: Book, colors: AdaptivePalette) -> some View {
-        let chapter = book.chapters[safe: chapterIndex]
-        return ScrollViewReader { proxy in
-            ScrollView {
-                VStack(alignment: .leading, spacing: 22) {
-                    if let title = chapter?.title, !title.isEmpty {
-                        Text(title)
-                            .font(AppFont.display(20))
-                            .foregroundColor(colors.text)
-                            .padding(.bottom, 4)
-                    }
+    // MARK: - Reading view
 
-                    // Lazy for the same reason the scroll reading view is —
-                    // a chapter can still run to hundreds of paragraphs, and
-                    // only the ones on/near screen should become real
-                    // UITextViews at any one time.
-                    LazyVStack(alignment: .leading, spacing: 22) {
-                        ForEach(Array((chapter?.paragraphs ?? []).enumerated()), id: \.offset) { index, paragraph in
-                            SelectableParagraphView(
-                                text: paragraph,
-                                fontSize: 16,
-                                textColor: UIColor(colors.text.opacity(0.92)),
-                                lineSpacing: 7,
-                                onTapped: {
-                                    store.setLibraryBookmark(bookId: bookId, chapterIndex: chapterIndex, paragraphIndex: index)
-                                }
-                            )
-                            .id(index)
-                        }
-                    }
-
-                    chapterNavigation(book, colors: colors)
+    /// One `BookChapterWebView` loaded with whichever chapter is current.
+    /// Crossing a chapter boundary is driven by `BookChapterWebView`'s
+    /// `onRequestNextChapter`/`onRequestPreviousChapter` (an edge-of-content
+    /// swipe) or by the footer chevrons / table of contents, all of which
+    /// go through `htmlGoNext`/`htmlGoPrevious` or set `htmlCurrentChapterIndex`
+    /// directly.
+    private func readingViewHTML(_ book: Book, colors: AdaptivePalette) -> some View {
+        let chapterIndex = min(max(0, htmlCurrentChapterIndex), max(0, book.chapters.count - 1))
+        return GeometryReader { geo in
+            BookChapterWebView(
+                html: chapterHTML(for: book.chapters[chapterIndex]),
+                theme: theme,
+                appearanceMode: appearanceMode,
+                fontScale: fontScale,
+                size: geo.size,
+                currentPage: $htmlCurrentPage,
+                pageCount: $htmlPageCount,
+                initialFraction: htmlInitialFraction,
+                proxy: htmlProxy,
+                onRequestNextChapter: {
+                    guard chapterIndex < book.chapters.count - 1 else { return }
+                    htmlInitialFraction = 0
+                    htmlCurrentChapterIndex = chapterIndex + 1
+                },
+                onRequestPreviousChapter: {
+                    guard chapterIndex > 0 else { return }
+                    htmlInitialFraction = 1
+                    htmlCurrentChapterIndex = chapterIndex - 1
+                },
+                onAddToJournal: { excerpt in
+                    pendingJournalExcerpt = excerpt
+                },
+                onSaveAsScroll: { excerpt in
+                    pendingScrollSuggestedTitle = nil
+                    pendingScrollExcerpt = excerpt
                 }
-                .padding(.horizontal, 28)
-                .padding(.top, 20)
-                .padding(.bottom, 32)
+            )
+            .onChange(of: htmlCurrentPage) { _, newValue in
+                guard htmlPageCount > 0 else { return }
+                let fraction = htmlPageCount > 1 ? Double(newValue) / Double(htmlPageCount - 1) : 0
+                store.setLibraryBookmark(bookId: bookId, chapterIndex: chapterIndex, scrollFraction: fraction)
             }
-            .onAppear {
-                if let entry = indexEntry {
-                    chapterIndex = min(entry.bookmarkChapterIndex, max(0, book.chapters.count - 1))
-                    if let paragraph = entry.bookmarkParagraphIndex {
-                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) {
-                            withAnimation { proxy.scrollTo(paragraph, anchor: .top) }
-                        }
-                    }
-                }
-            }
-            .onChange(of: chapterIndex) { _, newValue in
-                store.setLibraryBookmark(bookId: bookId, chapterIndex: newValue, paragraphIndex: nil)
-            }
+        }
+        .safeAreaInset(edge: .bottom) {
+            let multiChapter = book.chapters.count > 1
+            ReadingProgressBar(
+                progress: htmlPageCount > 1 ? Double(htmlCurrentPage) / Double(htmlPageCount - 1) : 1,
+                caption: htmlPageProgressCaption(book: book),
+                brass: theme.brass,
+                backgroundColor: colors.background,
+                onTapCaption: multiChapter ? { showTableOfContents = true } : nil,
+                onPrevious: (htmlCurrentPage > 0 || chapterIndex > 0) ? { htmlGoPrevious(book: book) } : nil,
+                onNext: (htmlCurrentPage < htmlPageCount - 1 || chapterIndex < book.chapters.count - 1) ? { htmlGoNext(book: book) } : nil
+            )
         }
     }
 
-    private func chapterNavigation(_ book: Book, colors: AdaptivePalette) -> some View {
-        HStack {
-            Button {
-                chapterIndex = max(0, chapterIndex - 1)
-            } label: {
-                Label("Previous", systemImage: "chevron.left")
-            }
-            .disabled(chapterIndex == 0)
-
-            Spacer()
-
-            Text("Chapter \(chapterIndex + 1) of \(book.chapters.count)")
-                .font(AppFont.mono(11))
-                .foregroundColor(colors.textFaint)
-
-            Spacer()
-
-            Button {
-                chapterIndex = min(book.chapters.count - 1, chapterIndex + 1)
-            } label: {
-                Label("Next", systemImage: "chevron.right")
-                    .labelStyle(.trailingIcon)
-            }
-            .disabled(chapterIndex >= book.chapters.count - 1)
-        }
-        .font(.system(size: 13))
-        .foregroundColor(theme.brass)
-        .padding(.top, 8)
+    /// A chapter's sanitized markup, or — for the rare chapter that has
+    /// none (extraction failed for just this one, or the book predates
+    /// HTML capture) — its plain paragraphs wrapped in `<p>` tags, so
+    /// `BookChapterWebView` always has something structurally valid to lay
+    /// out rather than an empty page.
+    private func chapterHTML(for chapter: BookChapter) -> String {
+        guard chapter.html.isEmpty else { return chapter.html }
+        return chapter.paragraphs.map { paragraph in
+            let escaped = paragraph
+                .replacingOccurrences(of: "&", with: "&amp;")
+                .replacingOccurrences(of: "<", with: "&lt;")
+                .replacingOccurrences(of: ">", with: "&gt;")
+            return "<p>\(escaped)</p>"
+        }.joined()
     }
 
-    private func chapterLabel(_ chapter: BookChapter, index: Int) -> String {
-        if let title = chapter.title, !title.isEmpty { return title }
-        return "Chapter \(index + 1)"
+    /// Steps to the next page within the current chapter, or — if already
+    /// on the last page — straight to the next chapter's first page. Used
+    /// by the footer's chevron, which (unlike an edge-of-content swipe) has
+    /// no scroll gesture of its own to read an overscroll from.
+    private func htmlGoNext(book: Book) {
+        if htmlCurrentPage < htmlPageCount - 1 {
+            htmlProxy.goToNextPage()
+        } else if htmlCurrentChapterIndex < book.chapters.count - 1 {
+            htmlInitialFraction = 0
+            htmlCurrentChapterIndex += 1
+        }
+    }
+
+    /// Mirrors `htmlGoNext(book:)` for the previous-page chevron.
+    private func htmlGoPrevious(book: Book) {
+        if htmlCurrentPage > 0 {
+            htmlProxy.goToPreviousPage()
+        } else if htmlCurrentChapterIndex > 0 {
+            htmlInitialFraction = 1
+            htmlCurrentChapterIndex -= 1
+        }
+    }
+
+    private func htmlPageProgressCaption(book: Book) -> String {
+        let chapterNum = min(max(0, htmlCurrentChapterIndex), max(0, book.chapters.count - 1)) + 1
+        let localPage = htmlCurrentPage + 1
+        let totalLocalPages = max(1, htmlPageCount)
+        if book.chapters.count > 1 {
+            return "Chapter \(chapterNum) of \(book.chapters.count) \u{B7} Page \(localPage) of \(totalLocalPages)"
+        } else {
+            return "Page \(localPage) of \(totalLocalPages)"
+        }
+    }
+
+    // MARK: - Bookmark restore
+
+    /// Mirrors `ScrollEditorSheet.quotedExcerpt`, attributing the quote to
+    /// the book's title rather than a scroll's roman numeral.
+    private func quotedExcerpt(_ excerpt: String, book: Book) -> String {
+        "\u{201C}\(excerpt)\u{201D}\n\n\u{2014} \(book.title)"
     }
 
     private func load() async {
         guard book == nil else { return }
         do {
             let loaded = try LibraryStore.load(bookId)
-            await MainActor.run { book = loaded }
+            await MainActor.run {
+                book = loaded
+                if let entry = indexEntry {
+                    htmlCurrentChapterIndex = min(max(0, entry.bookmarkChapterIndex), max(0, loaded.chapters.count - 1))
+                    htmlInitialFraction = entry.bookmarkScrollFraction ?? 0
+                }
+            }
         } catch {
             let message = (error as? LocalizedError)?.errorDescription ?? "This book couldn't be opened."
             await MainActor.run { loadError = message }
         }
-    }
-}
-
-private struct TrailingIconLabelStyle: LabelStyle {
-    func makeBody(configuration: Configuration) -> some View {
-        HStack {
-            configuration.title
-            configuration.icon
-        }
-    }
-}
-
-private extension LabelStyle where Self == TrailingIconLabelStyle {
-    static var trailingIcon: TrailingIconLabelStyle { TrailingIconLabelStyle() }
-}
-
-private extension Array {
-    subscript(safe index: Int) -> Element? {
-        indices.contains(index) ? self[index] : nil
     }
 }

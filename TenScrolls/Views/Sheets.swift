@@ -16,10 +16,35 @@ struct ScrollEditorSheet: View {
     @State private var theme: String
     @State private var notes: String
     @State private var editing = false
-    
-    // Intentional friction gate state
-    @State private var scrollProgress: CGFloat = 0
-    @State private var hasScrolledToBottom = false
+    @State private var showFontControl = false
+
+    // Intentional friction gate state — now driven by page position within
+    // the WKWebView-paginated reading engine (`BookChapterWebView`, see
+    // BookWebReader.swift) rather than scroll offset or the old
+    // `TextPaginator`-based paragraph page list.
+    @State private var htmlCurrentPage: Int = 0
+    // Starts at 0, not 1, even though a single-page scroll's *real*
+    // pageCount also settles at 1 — if this defaulted to 1, the very
+    // first measurement for a one-page scroll would set it to the same
+    // value it already had, `.onChange(of: htmlPageCount)` below would
+    // never fire (no actual change), and `hasReachedLastPage` would never
+    // flip true: the reader hits the only page there is, the friction
+    // hint still says "Swipe to the end to complete", and the close
+    // button stays disabled forever with no way to tell why. Starting at
+    // 0 guarantees the first real settle (0 -> anything, including 1) is
+    // always a genuine change.
+    @State private var htmlPageCount: Int = 0
+    // Was hardcoded to 0 — meaning every scroll always opened back at page
+    // one, no matter where the reader last stopped (`Scroll.bookmarkParagraphIndex`,
+    // see Models.swift, exists specifically so reopening can resume there).
+    // Set from the bookmark in `init` below instead: an exact page isn't
+    // knowable ahead of layout, but the bookmarked paragraph's position
+    // among all paragraphs is a reasonable stand-in fraction, the same way
+    // `LibraryIndexEntry.bookmarkScrollFraction` approximates a page
+    // position for the Library reader.
+    @State private var htmlInitialFraction: Double?
+    @State private var htmlProxy = BookWebReaderProxy()
+    @State private var hasReachedLastPage = false
     @State private var readingStartTime: Date?
     @State private var currentTime = Date()  // For timer updates
 
@@ -42,7 +67,7 @@ struct ScrollEditorSheet: View {
         return currentTime.timeIntervalSince(startTime) >= minimumReadingTimeSeconds
     }
     private var canComplete: Bool {
-        let result = editing || hasScrolledToBottom && hasMetTimeRequirement
+        let result = editing || hasReachedLastPage && hasMetTimeRequirement
         // Notify when reading is complete (for session validation)
         if result && !editing && onReadingComplete != nil {
             Task { @MainActor in
@@ -65,18 +90,36 @@ struct ScrollEditorSheet: View {
     var themeOption: ThemeOption { Palette.theme(for: store.state.activeThemeId) }
     var hasContent: Bool { !title.isEmpty || !notes.isEmpty || !theme.isEmpty }
     var days: Int { store.state.scrollDaysCompleted(scroll.id) }
+    private var fontScale: CGFloat { CGFloat(store.state.readingFontScale) }
 
     var body: some View {
         let colors = AdaptivePalette(mode: appearanceMode)
         NavigationStack {
-            ScrollView {
+            Group {
                 if editing {
-                    editingView
+                    ScrollView { editingView }
                 } else {
                     readingView
                 }
             }
             .background(colors.ink2.ignoresSafeArea())
+            .safeAreaInset(edge: .bottom) {
+                if !editing && hasContent {
+                    VStack(spacing: 0) {
+                        if !canComplete {
+                            frictionHintView
+                        }
+                        ReadingProgressBar(
+                            progress: pageProgressValue,
+                            caption: pageProgressCaption,
+                            brass: themeOption.brass,
+                            backgroundColor: colors.ink2,
+                            onPrevious: htmlCurrentPage > 0 ? { htmlProxy.goToPreviousPage() } : nil,
+                            onNext: htmlCurrentPage < htmlPageCount - 1 ? { htmlProxy.goToNextPage() } : nil
+                        )
+                    }
+                }
+            }
             .navigationTitle(editing ? "Edit Scroll \(scroll.roman)" : "Scroll \(scroll.roman)")
             .inlineNavigationBarTitle()
             .toolbar {
@@ -99,6 +142,25 @@ struct ScrollEditorSheet: View {
                     }
                     .disabled(!editing && !canComplete && hasContent)
                     .opacity((editing || canComplete || !hasContent) ? 1.0 : 0.5)
+                }
+                if !editing && hasContent {
+                    ToolbarItem(placement: .navigationBarTrailing) {
+                        Button {
+                            showFontControl = true
+                        } label: {
+                            Text("Aa").font(.system(size: 15, weight: .semibold, design: .serif))
+                        }
+                        .popover(isPresented: $showFontControl) {
+                            ReadingFontSizeControl(
+                                scale: Binding(
+                                    get: { store.state.readingFontScale },
+                                    set: { store.setReadingFontScale($0) }
+                                ),
+                                brass: themeOption.brass
+                            )
+                            .presentationCompactAdaptation(.popover)
+                        }
+                    }
                 }
                 ToolbarItem(placement: .confirmationAction) {
                     if editing {
@@ -133,217 +195,234 @@ struct ScrollEditorSheet: View {
     }
     // MARK: - Reading View
 
-    private var readingView: some View {
+    /// Inner HTML for the WKWebView-based reading engine (`BookChapterWebView`,
+    /// see `BookWebReader.swift`). The ornament/status-pill/title/theme header
+    /// is flowed at the very top of the document — rather than passed in
+    /// separately — so the CSS-column pagination naturally lands it on page
+    /// one, the same "only-on-first-page" placement the old `pageContent`'s
+    /// `isFirstPage` check used to enforce explicitly. Each paragraph carries
+    /// a `data-p="N"` attribute so `BookChapterWebView.paragraphTapBridgeScript`
+    /// can report taps back for bookmarking, and the currently-bookmarked
+    /// paragraph (if any) gets the `bookmarked` class/label that
+    /// `BookChapterWebView.document`'s injected CSS already styles.
+    private var scrollHTML: String {
         let colors = AdaptivePalette(mode: appearanceMode)
-        return ScrollViewReader { proxy in
-            ScrollView {
-                VStack(alignment: .leading, spacing: 0) {
-                    // Header ornament
-                    HStack {
-                        Spacer()
-                        VStack(spacing: 6) {
-                            Text("⟐")
-                                .font(.system(size: 22))
-                                .foregroundColor(themeOption.brass.opacity(0.5))
-                            Text("SCROLL \(scroll.roman)")
-                                .font(AppFont.mono(11))
-                                .tracking(2.4)
-                                .foregroundColor(themeOption.brass.opacity(0.7))
-                        }
-                        Spacer()
-                    }
-                    .padding(.top, 24)
-                    .padding(.bottom, 20)
-                    .id("top")
+        let brass = themeOption.brass.hexString()
 
-                    // Status pill
-                    HStack {
-                        Spacer()
-                        statusPill
-                        Spacer()
-                    }
-                    .padding(.bottom, 28)
+        var html = ""
+        html += "<div style=\"text-align:center;margin-bottom:6px;\">"
+        html += "<span style=\"font-size:22px;color:\(brass)88;\">⟐</span>"
+        html += "</div>"
+        html += "<div style=\"text-align:center;font-family:-apple-system,sans-serif;font-size:11px;letter-spacing:2.4px;color:\(brass)B3;margin-bottom:20px;\">SCROLL \(scroll.roman)</div>"
+        html += "<div style=\"text-align:center;margin-bottom:28px;\">\(statusPillHTML)</div>"
 
-                    // Title
-                    if !title.isEmpty {
-                        Text(title)
-                            .font(AppFont.display(26, weight: .bold))
-                            .foregroundColor(colors.text)
-                            .multilineTextAlignment(.leading)
-                            .padding(.bottom, 4)
-                    }
+        // Sized in `em`, not a fontScale-baked `px` value: the body's own
+        // font-size already carries `fontScale` (see
+        // `BookChapterWebView.document`), so these scale with it for free.
+        // Baking `fontScale` in here directly used to mean every "Aa" size
+        // change produced a different `html` string, which made
+        // `BookChapterWebView.updateUIView`'s `sameContent` check (see
+        // BookWebReader.swift) think the chapter itself had changed — so
+        // instead of keeping the reader's current page, it reset to
+        // `htmlInitialFraction` (always page 0 here) on every font
+        // adjustment, which looked like swiping had stopped working.
+        if !title.isEmpty {
+            html += "<h1 style=\"font-family:Georgia,serif;font-size:1.625em;margin:0 0 4px 0;\">\(Self.escapeHTML(title))</h1>"
+        }
+        if !theme.isEmpty {
+            html += "<div style=\"font-style:italic;color:\(brass);font-size:0.9375em;margin-bottom:20px;\">\(Self.escapeHTML(theme))</div>"
+        }
+        if !title.isEmpty || !theme.isEmpty {
+            html += "<hr style=\"border:none;border-top:1px solid \(brass)33;margin:0 0 24px 0;\">"
+        }
 
-                    // Theme line
-                    if !theme.isEmpty {
-                        Text(theme)
-                            .font(.system(size: 15, weight: .medium, design: .serif))
-                            .italic()
-                            .foregroundColor(themeOption.brass)
-                            .padding(.bottom, 20)
-                    }
+        for (index, paragraph) in scroll.paragraphs.enumerated() {
+            let isBookmarked = scroll.bookmarkParagraphIndex == index
+            var p = isBookmarked ? "<p data-p=\"\(index)\" class=\"bookmarked\">" : "<p data-p=\"\(index)\">"
+            if isBookmarked {
+                p += "<span class=\"bookmark-label\">You stopped here</span>"
+            }
+            p += Self.escapeHTML(paragraph)
+            p += "</p>"
+            html += p
+        }
 
-                    // Decorative divider
-                    if !title.isEmpty || !theme.isEmpty {
-                        HStack(spacing: 10) {
-                            Rectangle().fill(themeOption.brass.opacity(0.2)).frame(height: 1)
-                            Circle().fill(themeOption.brass.opacity(0.35)).frame(width: 5, height: 5)
-                            Rectangle().fill(themeOption.brass.opacity(0.2)).frame(height: 1)
-                        }
-                        .padding(.bottom, 24)
-                    }
+        html += "<div style=\"text-align:center;margin-top:36px;\"><span style=\"font-size:18px;color:\(brass)40;\">⟐</span></div>"
+        // colors.textDim currently unused by this template, but kept in scope
+        // for the next header/footer tweak that needs a non-brass color.
+        _ = colors
+        return html
+    }
 
-                    // Notes body — rendered paragraph by paragraph so each one
-                    // can be highlighted (Add to Journal) and tapped (bookmark
-                    // where reading stopped) independently.
-                    if !notes.isEmpty {
-                        // Lazy: only paragraphs actually on/near screen get a real
-                        // UITextView instantiated. A plain VStack here would build
-                        // every paragraph up front — fine for a normal scroll, but
-                        // an imported document with thousands of paragraphs would
-                        // spike memory building all of them at once. See also the
-                        // size guard in DocumentImportSheet, which keeps something
-                        // book-length from landing in a single scroll to begin with.
-                        LazyVStack(alignment: .leading, spacing: 22) {
-                            ForEach(Array(scroll.paragraphs.enumerated()), id: \.offset) { index, paragraph in
-                                paragraphBlock(paragraph, index: index)
-                                    .id(index)
+    /// HTML counterpart to `statusPill`, since the status pill needs to be
+    /// part of `scrollHTML`'s flowed document rather than a native SwiftUI
+    /// overlay now that the header lives inside the page-one column.
+    private var statusPillHTML: String {
+        let colors = AdaptivePalette(mode: appearanceMode)
+        let (label, hex): (String, String) = {
+            switch scroll.status {
+            case .mastered: return ("MASTERED", colors.green.hexString())
+            case .active: return ("DAY \(days) OF 30", themeOption.brass.hexString())
+            case .locked: return ("LOCKED", colors.textFaint.hexString())
+            }
+        }()
+        return "<span style=\"display:inline-block;font-family:-apple-system,sans-serif;font-size:10px;letter-spacing:1px;color:\(hex);background:\(hex)1F;padding:5px 12px;border-radius:999px;\">\(label)</span>"
+    }
+
+    private static func escapeHTML(_ s: String) -> String {
+        s.replacingOccurrences(of: "&", with: "&amp;")
+         .replacingOccurrences(of: "<", with: "&lt;")
+         .replacingOccurrences(of: ">", with: "&gt;")
+         .replacingOccurrences(of: "\"", with: "&quot;")
+    }
+
+    /// Reads through `BookChapterWebView` (the same WKWebView, CSS-column
+    /// pagination engine `LibraryReaderView` uses) instead of the old
+    /// `TextPaginator`/`PageTurnContainer` paragraph-page pipeline, so the
+    /// two readers share one rendering engine rather than two different
+    /// ones. The friction gate (must reach the end + a minimum dwell time
+    /// before the scroll counts as read) keys off `htmlCurrentPage`
+    /// reaching the last page the engine reports; the minimum-time half is
+    /// unchanged.
+    private var readingView: some View {
+        GeometryReader { geo in
+            Group {
+                if !hasContent {
+                    emptyStateView
+                } else {
+                    BookChapterWebView(
+                        html: scrollHTML,
+                        theme: themeOption,
+                        appearanceMode: appearanceMode,
+                        fontScale: fontScale,
+                        size: geo.size,
+                        currentPage: $htmlCurrentPage,
+                        pageCount: $htmlPageCount,
+                        initialFraction: htmlInitialFraction,
+                        proxy: htmlProxy,
+                        onAddToJournal: { excerpt in
+                            pendingExcerpt = excerpt
+                        },
+                        onParagraphTap: { index in
+                            bookmarkHaptic.impactOccurred()
+                            withAnimation(.easeOut(duration: 0.2)) {
+                                justBookmarkedIndex = index
                             }
+                            store.setBookmark(scrollId: scroll.id, paragraphIndex: index)
+                        }
+                    )
+                    .background(AdaptivePalette(mode: appearanceMode).ink2)
+                    .onChange(of: htmlCurrentPage) { _, newValue in
+                        if htmlPageCount > 0 && newValue >= htmlPageCount - 1 {
+                            hasReachedLastPage = true
                         }
                     }
-
-                    // Empty state
-                    if !hasContent {
-                        VStack(spacing: 14) {
-                            Image(systemName: "square.and.pencil")
-                                .font(.system(size: 32))
-                                .foregroundColor(colors.textFaint)
-                            Text("No notes yet")
-                                .font(AppFont.display(18))
-                                .foregroundColor(colors.textDim)
-                            Text("Tap the pencil icon above to transcribe\nyour title and notes from the book.")
-                                .font(.system(size: 13))
-                                .foregroundColor(colors.textFaint)
-                                .multilineTextAlignment(.center)
-                        }
-                        .frame(maxWidth: .infinity)
-                        .padding(.vertical, 48)
-                    }
-
-                    // Bottom ornament and friction gate indicator
-                    VStack(spacing: 16) {
-                        HStack {
-                            Spacer()
-                            Text("⟐")
-                                .font(.system(size: 18))
-                                .foregroundColor(themeOption.brass.opacity(0.25))
-                            Spacer()
-                        }
-                        
-                        // Reading progress indicator
-                        if hasContent && !canComplete {
-                            VStack(spacing: 8) {
-                                if !hasScrolledToBottom {
-                                    Label("Scroll to the end to complete", systemImage: "arrow.down")
-                                        .font(.system(size: 13))
-                                        .foregroundColor(colors.textFaint)
-                                } else if !hasMetTimeRequirement {
-                                    let remaining = Int(minimumReadingTimeSeconds - currentTime.timeIntervalSince(readingStartTime ?? Date()))
-                                    Label("Take your time (\(max(0, remaining))s)", systemImage: "clock")
-                                        .font(.system(size: 13))
-                                        .foregroundColor(colors.textFaint)
-                                }
-                            }
-                            .padding(.vertical, 12)
+                    .onChange(of: htmlPageCount) { _, newValue in
+                        // A scroll short enough to fit on one page is, by
+                        // definition, already at its last page the moment
+                        // it appears — mirrors the old paginate()'s
+                        // `newPages.count <= 1` case. Checked against
+                        // exactly 1, not `<= 1`: `htmlPageCount` also
+                        // transiently passes through 0 while a same-content
+                        // reload (font size, theme) is mid-reformat (see
+                        // `Coordinator.performLoad`'s `pageCount = 0`), and
+                        // that transient 0 used to trip this same check —
+                        // falsely marking a scroll "finished" on every font
+                        // size tick.
+                        if newValue == 1 {
+                            hasReachedLastPage = true
                         }
                     }
-                    .padding(.top, 36)
-                    .padding(.bottom, 20)
-                    .id("bottom")
-                    
-                    // Invisible marker for scroll detection
-                    Color.clear
-                        .frame(height: 1)
-                        .onAppear {
-                            // When this appears, user has scrolled to bottom
-                            if hasContent && !hasScrolledToBottom {
-                                hasScrolledToBottom = true
-                            }
-                        }
                 }
-                .padding(.horizontal, 28)
             }
             .onAppear {
                 if hasContent && readingStartTime == nil {
                     readingStartTime = Date()
                     onReadingStarted?()
                 }
-                if let bookmark = scroll.bookmarkParagraphIndex {
-                    // Slight delay lets the ScrollView finish laying out before
-                    // we ask it to jump — jumping on the same frame it appears
-                    // can silently no-op.
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) {
-                        withAnimation { proxy.scrollTo(bookmark, anchor: .top) }
-                    }
-                }
             }
-            .onChange(of: hasScrolledToBottom) { _, finished in
-                // The reading is done — the bookmark has served its purpose.
-                if finished, scroll.bookmarkParagraphIndex != nil {
-                    store.setBookmark(scrollId: scroll.id, paragraphIndex: nil)
-                }
+        }
+        .onChange(of: hasReachedLastPage) { _, finished in
+            // The reading is done — the bookmark has served its purpose.
+            if finished, scroll.bookmarkParagraphIndex != nil {
+                store.setBookmark(scrollId: scroll.id, paragraphIndex: nil)
             }
-            .sheet(isPresented: Binding(
-                get: { pendingExcerpt != nil },
-                set: { if !$0 { pendingExcerpt = nil } }
-            )) {
-                if let excerpt = pendingExcerpt {
-                    JournalComposerSheet(scroll: scroll, initialText: quotedExcerpt(excerpt)) { text in
-                        store.addJournalEntry(text, scrollId: scroll.id)
-                        pendingExcerpt = nil
-                    }
+        }
+        .sheet(isPresented: Binding(
+            get: { pendingExcerpt != nil },
+            set: { if !$0 { pendingExcerpt = nil } }
+        )) {
+            if let excerpt = pendingExcerpt {
+                JournalComposerSheet(scroll: scroll, initialText: quotedExcerpt(excerpt)) { text in
+                    store.addJournalEntry(text, scrollId: scroll.id)
+                    pendingExcerpt = nil
                 }
             }
         }
+    }
+
+    /// The friction-gate progress hint that used to live inside
+    /// `footerBlock`, on the last page of the continuous/paragraph reader.
+    /// Pulled out into the chrome above `ReadingProgressBar` instead, since
+    /// it depends on `currentTime` (a per-second timer) and the WKWebView's
+    /// paginated HTML document shouldn't be regenerated every second just
+    /// to update a caption.
+    @ViewBuilder
+    private var frictionHintView: some View {
+        let colors = AdaptivePalette(mode: appearanceMode)
+        Group {
+            if !hasReachedLastPage {
+                Label("Swipe to the end to complete", systemImage: "arrow.right")
+            } else if !hasMetTimeRequirement {
+                let remaining = Int(minimumReadingTimeSeconds - currentTime.timeIntervalSince(readingStartTime ?? Date()))
+                Label("Take your time (\(max(0, remaining))s)", systemImage: "clock")
+            }
+        }
+        .font(.system(size: 13))
+        .foregroundColor(colors.textFaint)
+        .padding(.vertical, 8)
+        .frame(maxWidth: .infinity)
+        .background(colors.ink2)
+    }
+
+    private var emptyStateView: some View {
+        let colors = AdaptivePalette(mode: appearanceMode)
+        return VStack(spacing: 14) {
+            Image(systemName: "square.and.pencil")
+                .font(.system(size: 32))
+                .foregroundColor(colors.textFaint)
+            Text("No notes yet")
+                .font(AppFont.display(18))
+                .foregroundColor(colors.textDim)
+            Text("Tap the pencil icon above to transcribe\nyour title and notes from the book.")
+                .font(.system(size: 13))
+                .foregroundColor(colors.textFaint)
+                .multilineTextAlignment(.center)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .padding(.vertical, 48)
+    }
+
+    // MARK: - Progress
+
+    /// Progress mirrors the WKWebView-paginated reading engine's own page
+    /// count/index (`htmlPageCount`/`htmlCurrentPage`) rather than the old
+    /// `pages`/`currentPageIndex` paragraph-page list, since pagination is
+    /// now computed by `BookChapterWebView`'s CSS columns, not here.
+    private var pageProgressValue: Double {
+        guard htmlPageCount > 1 else { return hasReachedLastPage ? 1 : 0 }
+        return Double(htmlCurrentPage) / Double(htmlPageCount - 1)
+    }
+
+    private var pageProgressCaption: String {
+        if hasReachedLastPage && htmlCurrentPage >= htmlPageCount - 1 {
+            return "End of Scroll \(scroll.roman)"
+        }
+        return "Page \(htmlCurrentPage + 1) of \(max(1, htmlPageCount)) · Scroll \(scroll.roman)"
     }
 
     private func quotedExcerpt(_ excerpt: String) -> String {
         "\u{201C}\(excerpt)\u{201D}\n\n— Scroll \(scroll.roman)"
-    }
-
-    @ViewBuilder
-    private func paragraphBlock(_ paragraph: String, index: Int) -> some View {
-        let colors = AdaptivePalette(mode: appearanceMode)
-        let isBookmarked = scroll.bookmarkParagraphIndex == index || justBookmarkedIndex == index
-        VStack(alignment: .leading, spacing: 8) {
-            if isBookmarked {
-                Label("You stopped here", systemImage: "bookmark.fill")
-                    .font(AppFont.mono(10))
-                    .tracking(0.6)
-                    .foregroundColor(themeOption.brass)
-                    .transition(.opacity.combined(with: .move(edge: .top)))
-            }
-            SelectableParagraphView(
-                text: paragraph,
-                fontSize: 16,
-                textColor: UIColor(colors.text.opacity(0.92)),
-                lineSpacing: 7,
-                onAddToJournal: { excerpt in
-                    pendingExcerpt = excerpt
-                },
-                onTapped: {
-                    bookmarkHaptic.impactOccurred()
-                    withAnimation(.easeOut(duration: 0.2)) {
-                        justBookmarkedIndex = index
-                    }
-                    store.setBookmark(scrollId: scroll.id, paragraphIndex: index)
-                }
-            )
-        }
-        .padding(.vertical, isBookmarked ? 10 : 0)
-        .padding(.horizontal, isBookmarked ? 10 : 0)
-        .background(isBookmarked ? themeOption.brass.opacity(0.07) : Color.clear)
-        .cornerRadius(8)
-        .animation(.easeOut(duration: 0.2), value: isBookmarked)
     }
 
     // MARK: - Editing View

@@ -116,9 +116,8 @@ private struct BookRow: View {
     private var progressLabel: String {
         guard entry.chapterCount > 0 else { return "Not started" }
         let chapter = min(entry.bookmarkChapterIndex + 1, entry.chapterCount)
-        return entry.bookmarkParagraphIndex == nil && entry.bookmarkChapterIndex == 0
-            ? "Not started"
-            : "Chapter \(chapter) of \(entry.chapterCount)"
+        let started = entry.bookmarkChapterIndex > 0 || (entry.bookmarkScrollFraction ?? 0) > 0
+        return started ? "Chapter \(chapter) of \(entry.chapterCount)" : "Not started"
     }
 
     var body: some View {

@@ -14,9 +14,16 @@ struct DocumentImportSheet: View {
 
     private struct ParsedDocument {
         let filename: String
+        /// The EPUB's own declared title, from <dc:title> — `nil` for PDFs,
+        /// which have no such metadata, or if the EPUB didn't declare one.
+        /// Preferred over any per-chapter heading guess in `titles` below.
+        let bookTitle: String?
         /// Ordered natural chunks — EPUB chapters, or PDF pages.
         let chunks: [String]
         let titles: [String?]
+        /// Sanitized per-chapter HTML, EPUB imports only — same order/count
+        /// as `chunks`. `nil` for PDFs, which have no native markup to keep.
+        let html: [String]?
     }
 
     private enum Stage {
@@ -240,15 +247,19 @@ struct DocumentImportSheet: View {
                 let ext = url.pathExtension.lowercased()
                 let chunks: [String]
                 let titles: [String?]
+                var html: [String]? = nil
+                var bookTitle: String? = nil
                 if ext == "epub" {
                     let parsed = try EPUBParser.extractChapters(from: url)
-                    chunks = parsed.map { $0.text }
-                    titles = parsed.map { $0.title }
+                    bookTitle = parsed.bookTitle
+                    chunks = parsed.chapters.map { $0.text }
+                    titles = parsed.chapters.map { $0.title }
+                    html = parsed.chapters.map { $0.html }
                 } else {
                     chunks = try PDFImporter.extractPages(from: url)
                     titles = Array(repeating: nil, count: chunks.count)
                 }
-                let doc = ParsedDocument(filename: url.lastPathComponent, chunks: chunks, titles: titles)
+                let doc = ParsedDocument(filename: url.lastPathComponent, bookTitle: bookTitle, chunks: chunks, titles: titles, html: html)
                 await MainActor.run { stage = .configure(doc) }
             } catch {
                 let message = (error as? LocalizedError)?.errorDescription ?? "This file couldn't be read."
@@ -264,7 +275,9 @@ struct DocumentImportSheet: View {
         case .singleScroll:
             guard let id = selectedScrollId else { return }
             let text = doc.chunks.joined(separator: "\n\n")
-            let title = doc.titles.compactMap { $0 }.first
+            // Prefer the EPUB's own declared title over a chapter-1 heading
+            // guess here too, for the same reason as the Library path below.
+            let title = doc.bookTitle ?? doc.titles.compactMap { $0 }.first
             store.importDocument(text: text, title: title, intoScrollId: id)
             dismiss()
         case .allTen:
@@ -273,7 +286,7 @@ struct DocumentImportSheet: View {
             dismiss()
         case .library:
             do {
-                try store.addBookToLibrary(filename: doc.filename, chunks: doc.chunks, titles: doc.titles)
+                try store.addBookToLibrary(filename: doc.filename, chunks: doc.chunks, titles: doc.titles, html: doc.html, bookTitle: doc.bookTitle)
                 dismiss()
             } catch {
                 importError = (error as? LocalizedError)?.errorDescription ?? "Something went wrong saving this book."

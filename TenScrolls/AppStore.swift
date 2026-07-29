@@ -182,10 +182,14 @@ final class AppStore: ObservableObject {
         )
         WidgetData.save(wData)
 
-        // Export journal data for journal widget
-        let journalEntries = state.journal
-            .filter { !$0.isDraft && !$0.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
-            .prefix(50) // Limit to most recent 50 entries to keep widget data size reasonable
+        // Export journal data for journal widget. The widget only draws from
+        // entries the reader has explicitly starred for it; until at least one
+        // exists, fall back to the most recent entries so the widget isn't
+        // empty for a new reader who hasn't discovered starring yet.
+        let eligible = state.journal.filter { !$0.isDraft && !$0.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+        let pinned = eligible.filter { $0.isPinnedForWidget }
+        let journalEntries = (pinned.isEmpty ? eligible.sorted { $0.date > $1.date } : pinned)
+            .prefix(50) // Cap so widget data size stays reasonable
             .map { entry -> JournalWidgetData.JournalWidgetEntry in
                 let scroll = state.scrolls.first { $0.id == entry.scrollId }
                 return JournalWidgetData.JournalWidgetEntry(
@@ -353,7 +357,7 @@ final class AppStore: ObservableObject {
         let yesterday = DateKey.add(-1, to: key)
         let dayBefore = DateKey.add(-2, to: key)
         if !state.isDayComplete(yesterday), state.isDayComplete(dayBefore), !state.shieldUsedDates.contains(yesterday) {
-            let avail = max(0, state.totalDaysCompleted / 7 - state.shieldUsedDates.count)
+            let avail = max(0, state.totalDaysCompleted / 7 - state.shieldUsedDates.count + (state.purchasedShields ?? 0))
             if avail > 0 {
                 state.shieldUsedDates.append(yesterday)
             }
@@ -511,8 +515,13 @@ final class AppStore: ObservableObject {
     /// the book is, it can't bloat the UserDefaults blob the rest of the app
     /// state rides in. Only the small `LibraryIndexEntry` (title/chapter
     /// count) joins `state.library`.
-    func addBookToLibrary(filename: String, chunks: [String], titles: [String?]) throws {
-        let (book, index) = Book.from(filename: filename, chunks: chunks, titles: titles)
+    ///
+    /// `html`, when the source was an EPUB, carries each chapter's sanitized
+    /// original markup (see `EPUBParser`) so the Library reader can render
+    /// tables/lists/images faithfully instead of the flattened plain-text
+    /// fallback. `nil` for PDF imports.
+    func addBookToLibrary(filename: String, chunks: [String], titles: [String?], html: [String]? = nil, bookTitle: String? = nil) throws {
+        let (book, index) = Book.from(filename: filename, chunks: chunks, titles: titles, html: html, bookTitle: bookTitle)
         try LibraryStore.save(book)
         state.libraryBooks.append(index)
         afterMutation()
@@ -526,13 +535,17 @@ final class AppStore: ObservableObject {
         afterMutation()
     }
 
-    /// Records where the reader stopped in a book. Only touches the small
-    /// index entry in `state` — the book's own file on disk is never
-    /// rewritten just to bookmark a reading position.
-    func setLibraryBookmark(bookId: UUID, chapterIndex: Int, paragraphIndex: Int?) {
+    /// Records where the reader stopped in a book, as a 0...1 fraction of
+    /// the chapter's page count rather than a paragraph index, since a
+    /// CSS-column page count can shift with font size or rotation in a way
+    /// a paragraph index survives but a raw page number wouldn't. Only
+    /// touches the small index entry in `state` — the book's own file on
+    /// disk is never rewritten just to bookmark a reading position. See
+    /// `LibraryIndexEntry.bookmarkScrollFraction`.
+    func setLibraryBookmark(bookId: UUID, chapterIndex: Int, scrollFraction: Double) {
         guard let idx = state.libraryBooks.firstIndex(where: { $0.id == bookId }) else { return }
         state.libraryBooks[idx].bookmarkChapterIndex = chapterIndex
-        state.libraryBooks[idx].bookmarkParagraphIndex = paragraphIndex
+        state.libraryBooks[idx].bookmarkScrollFraction = scrollFraction
         afterMutation()
     }
 
@@ -543,15 +556,27 @@ final class AppStore: ObservableObject {
     /// Adds a journal entry for a specific scroll — used when quoting a
     /// highlighted excerpt, which should stay attributed to the scroll being
     /// read even during the reread cycle, when `activeScroll` is nil.
-    func addJournalEntry(_ text: String, scrollId: Int?) {
+    /// `bookTitle` is set instead when the quote came from a Library book
+    /// rather than a scroll.
+    func addJournalEntry(_ text: String, scrollId: Int?, bookTitle: String? = nil) {
         let entry = JournalEntry(
             id: "j\(Int(Date().timeIntervalSince1970 * 1000))",
             date: DateKey.today(),
             scrollId: scrollId,
             text: text,
-            isDraft: false
+            isDraft: false,
+            bookTitle: bookTitle
         )
         state.journal.append(entry)
+        afterMutation()
+    }
+
+    /// Toggles whether an entry is included in the Journal Reflection widget's
+    /// rotation — the reader's way of curating which reflections are worth
+    /// resurfacing at random, rather than the widget grabbing anything.
+    func toggleJournalPinForWidget(_ id: String) {
+        guard let idx = state.journal.firstIndex(where: { $0.id == id }) else { return }
+        state.journal[idx].isPinnedForWidget.toggle()
         afterMutation()
     }
 
@@ -616,6 +641,14 @@ final class AppStore: ObservableObject {
 
     func setAppearanceMode(_ mode: AppearanceMode) {
         state.appearanceMode = mode
+        afterMutation()
+    }
+
+    /// Updates the shared reading text-size preference (the "Aa" control in
+    /// both the Scrolls reader and the Library reader). Debounced-persisted
+    /// like everything else, so dragging the control repeatedly doesn't spam disk writes.
+    func setReadingFontScale(_ scale: Double) {
+        state.readingFontScale = scale
         afterMutation()
     }
 

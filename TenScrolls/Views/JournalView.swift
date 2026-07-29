@@ -198,17 +198,31 @@ private struct DraftEntryRow: View {
 
 private struct JournalEntryRow: View {
     @Environment(\.appearanceMode) var appearanceMode
+    @EnvironmentObject var store: AppStore
     let entry: JournalEntry
     let scroll: Scroll?
     let onDelete: () -> Void
     let onConvertToDraft: () -> Void
     @State private var expanded = false
 
+    /// "Scroll IV", a book title, or an em dash when the entry has neither —
+    /// a plain journal reflection with no reading attached.
+    private var sourceLabel: String {
+        if let bookTitle = entry.bookTitle, !bookTitle.isEmpty { return bookTitle }
+        if let scroll { return "Scroll \(scroll.roman)" }
+        return "—"
+    }
+
     var body: some View {
         let colors = AdaptivePalette(mode: appearanceMode)
         VStack(alignment: .leading, spacing: 8) {
-            HStack {
-                Text("\(DateKey.short(entry.date)) · Scroll \(scroll?.roman ?? "—")")
+            HStack(spacing: 5) {
+                if entry.isPinnedForWidget {
+                    Image(systemName: "star.fill")
+                        .font(.system(size: 9))
+                        .foregroundColor(Palette.theme(for: store.state.activeThemeId).brass)
+                }
+                Text("\(DateKey.short(entry.date)) · \(sourceLabel)")
                     .font(AppFont.mono(10.5)).foregroundColor(colors.textFaint)
                 Spacer()
                 if expanded {
@@ -238,6 +252,15 @@ private struct JournalEntryRow: View {
             withAnimation(.easeInOut(duration: 0.2)) { expanded.toggle() }
         }
         .contextMenu {
+            Button {
+                store.toggleJournalPinForWidget(entry.id)
+            } label: {
+                Label(
+                    entry.isPinnedForWidget ? "Remove from Widget" : "Feature in Widget",
+                    systemImage: entry.isPinnedForWidget ? "star.slash" : "star"
+                )
+            }
+
             Button {
                 onConvertToDraft()
             } label: {

@@ -59,11 +59,22 @@ enum PDFImporter {
 // MARK: - EPUB
 
 enum EPUBParser {
-    /// Extracts each spine chapter as plain text, in reading order. A rough
-    /// title is derived from each chapter's first line, since chapter titles
-    /// live in the (frequently EPUB2-vs-3-inconsistent) nav/NCX document,
-    /// which this deliberately doesn't parse to keep scope contained.
-    static func extractChapters(from url: URL) throws -> [(title: String?, text: String)] {
+    /// Extracts the book's declared title (<metadata><dc:title>) plus each
+    /// spine chapter as sanitized HTML and its plain-text paragraphs, in
+    /// reading order. Each chapter also gets a rough per-chapter title
+    /// derived from its first line, since chapter titles live in the
+    /// (frequently EPUB2-vs-3-inconsistent) nav/NCX document, which this
+    /// deliberately doesn't parse to keep scope contained — that guess is
+    /// only ever meant for chapter headings, never as a stand-in for the
+    /// book's own title.
+    ///
+    /// `html` is sanitized before it's returned — scripts and stylesheets
+    /// stripped, local images inlined as base64 data URIs, external
+    /// http(s):// references neutralized — so it's safe to load directly
+    /// into a WKWebView later without a custom URL scheme handler or a
+    /// network round-trip. `text` is unchanged from before: the same
+    /// blank-line-joined paragraphs every other reading/import path expects.
+    static func extractChapters(from url: URL) throws -> (bookTitle: String?, chapters: [(title: String?, html: String, text: String)]) {
         let data = try Data(contentsOf: url)
         let zip = try MinimalZip(data: data)
 
@@ -90,28 +101,188 @@ enum EPUBParser {
             throw DocumentImportError.unreadable("This EPUB has no readable chapters.")
         }
 
+        // The book's real title lives in <metadata><dc:title>, not in any
+        // chapter's body text. Prefer it (when present and non-empty) over
+        // the per-chapter heading guesses below, which are only ever a rough
+        // stand-in for chapter 1's own heading, not the book's title.
+        let bookTitle = opfDelegate.title?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
+            ? opfDelegate.title
+            : nil
+
         let opfBase = (opfPath as NSString).deletingLastPathComponent
 
-        var chapters: [(title: String?, text: String)] = []
+        var chapters: [(title: String?, html: String, text: String)] = []
         for id in opfDelegate.spine {
             guard let href = opfDelegate.manifest[id] else { continue }
             let path = opfBase.isEmpty ? href : "\(opfBase)/\(href)"
             guard let htmlData = try? zip.contents(of: path),
-                  let text = try? htmlToPlainText(htmlData) else { continue }
-            let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !trimmed.isEmpty else { continue }
-            let title = trimmed.components(separatedBy: .newlines).first.map { String($0.prefix(60)) }
-            chapters.append((title, trimmed))
+                  let paragraphs = try? htmlToPlainText(htmlData), !paragraphs.isEmpty else { continue }
+            let title = deriveTitle(fromParagraphs: paragraphs)
+            let rawHTML = String(data: htmlData, encoding: .utf8) ?? String(data: htmlData, encoding: .isoLatin1) ?? ""
+            let sanitized = sanitizeChapterHTML(rawHTML, zip: zip, chapterPath: path)
+            chapters.append((title, sanitized, paragraphs.joined(separator: "\n\n")))
         }
 
         guard !chapters.isEmpty else {
             throw DocumentImportError.unreadable("No readable chapters were found in this EPUB.")
         }
-        return chapters
+        return (bookTitle, chapters)
+    }
+
+    /// Many EPUBs (this one included) mark a chapter's heading with two
+    /// separate lines — a short label like "CHAPTER ONE" followed by the
+    /// actual descriptive title, e.g. "The Matthew Effect" — rather than one
+    /// combined heading. Taking just the first line as-is (the previous
+    /// behavior) surfaces the unhelpful, repeats-every-chapter "CHAPTER ONE"
+    /// / "CHAPTER TWO" label instead of the title a reader would actually
+    /// recognize. This folds the two together when the first line looks like
+    /// a bare label (short, no lowercase letters — i.e. not a real sentence)
+    /// and the next line still reads like a heading rather than the chapter's
+    /// opening sentence of body text.
+    private static func deriveTitle(fromParagraphs paragraphs: [String]) -> String? {
+        guard let first = paragraphs.first?.trimmingCharacters(in: .whitespacesAndNewlines), !first.isEmpty else {
+            return nil
+        }
+        let looksLikeBareLabel = first.count <= 30 && first.rangeOfCharacter(from: .lowercaseLetters) == nil
+        guard looksLikeBareLabel, paragraphs.count > 1 else {
+            return String(first.prefix(60))
+        }
+        let second = paragraphs[1].trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !second.isEmpty, second.count <= 80, !second.hasSuffix(".") else {
+            return String(first.prefix(60))
+        }
+        return String("\(first): \(second)".prefix(80))
+    }
+
+    // MARK: - HTML sanitization
+
+    /// Prepares a chapter's raw markup to be loaded directly into a
+    /// WKWebView: strips anything that could run code or reach the network,
+    /// strips publisher styling so it doesn't fight the app's own theme CSS,
+    /// and inlines local images as base64 data URIs so nothing needs a
+    /// custom URL scheme handler to resolve. Structural tags (`<table>`,
+    /// `<ul>`/`<li>`, `<blockquote>`, headings) are left completely alone —
+    /// they're what this whole change exists to preserve.
+    ///
+    /// Regex-based rather than a full DOM parse, matching the rest of this
+    /// file's "parse just enough, deliberately" approach — EPUB chapter
+    /// markup is XHTML in practice, so element/attribute shapes are regular
+    /// enough for this to be reliable without pulling in a parsing library.
+    private static func sanitizeChapterHTML(_ rawHTML: String, zip: MinimalZip, chapterPath: String) -> String {
+        var html = rawHTML
+
+        // 1. Strip <script>...</script> entirely — no reason a book needs to
+        //    run code, and this closes off a real injection risk once we're
+        //    rendering live HTML.
+        html = html.replacingOccurrences(of: "(?is)<script\\b[^>]*>.*?</script>", with: "", options: .regularExpression)
+
+        // 2. Strip <style>...</style> blocks and stylesheet <link> tags — the
+        //    reader injects its own theme CSS, so publisher styling
+        //    shouldn't fight the app's dark/light palette. Table/list/
+        //    blockquote structure comes from the tags themselves, not the
+        //    CSS, so nothing structural is lost here.
+        html = html.replacingOccurrences(of: "(?is)<style\\b[^>]*>.*?</style>", with: "", options: .regularExpression)
+        html = html.replacingOccurrences(of: "(?i)<link\\b[^>]*rel\\s*=\\s*[\"']?stylesheet[\"']?[^>]*/?>", with: "", options: .regularExpression)
+
+        // 3. Inline local images as base64 data URIs, pulled straight out of
+        //    the EPUB's zip — avoids needing a custom WKURLSchemeHandler
+        //    just to serve images.
+        html = inlineImages(in: html, zip: zip, chapterPath: chapterPath)
+
+        // 4. Neutralize anything still pointing at an external http(s)://
+        //    resource (fonts, tracking pixels, whatever's left) — a WKWebView
+        //    loaded from a string will otherwise happily try to hit the
+        //    network, which is a privacy risk (a malicious EPUB could phone
+        //    home) and a performance one (no reason to wait on it).
+        html = html.replacingOccurrences(of: "(?i)\\b(href|src)\\s*=\\s*\"https?:[^\"]*\"", with: "$1=\"#\"", options: .regularExpression)
+
+        // 5. Strip inline event-handler attributes (onload=, onerror=,
+        //    onclick=, ...) and neutralize javascript: URIs. `<script>` tags
+        //    are already gone (step 1), but the reading engine keeps
+        //    JavaScript enabled in its WKWebView (the selection menu needs
+        //    `window.getSelection()`), which makes these just as live a
+        //    code-execution path as a `<script>` tag would have been —
+        //    stripping the tag alone isn't enough once JS itself can run.
+        html = html.replacingOccurrences(of: "(?i)\\son[a-z]+\\s*=\\s*\"[^\"]*\"", with: "", options: .regularExpression)
+        html = html.replacingOccurrences(of: "(?i)\\son[a-z]+\\s*=\\s*'[^']*'", with: "", options: .regularExpression)
+        html = html.replacingOccurrences(of: "(?i)\\b(href|src)\\s*=\\s*\"javascript:[^\"]*\"", with: "$1=\"#\"", options: .regularExpression)
+        html = html.replacingOccurrences(of: "(?i)\\b(href|src)\\s*=\\s*'javascript:[^']*'", with: "$1=\"#\"", options: .regularExpression)
+
+        return html
+    }
+
+    /// Finds every `<img ...src="...">` tag and, for any local (non-http,
+    /// non-data-URI) source, replaces the `src` with a base64 `data:` URI
+    /// built from the actual image bytes in the EPUB's zip. Any `<img>` the
+    /// source image can't be resolved for is left as-is — a broken image is
+    /// a much smaller problem than a crashed import.
+    private static func inlineImages(in html: String, zip: MinimalZip, chapterPath: String) -> String {
+        guard let imgRegex = try? NSRegularExpression(pattern: "<img\\b[^>]*>", options: [.caseInsensitive]),
+              let srcRegex = try? NSRegularExpression(pattern: "src\\s*=\\s*\"([^\"]*)\"", options: [.caseInsensitive]) else {
+            return html
+        }
+
+        let mutable = NSMutableString(string: html)
+        let matches = imgRegex.matches(in: mutable as String, options: [], range: NSRange(location: 0, length: mutable.length))
+
+        // Walk matches back-to-front so replacing one tag's range doesn't
+        // shift the ranges of the ones still to come.
+        for match in matches.reversed() {
+            let tag = mutable.substring(with: match.range) as NSString
+            guard let srcMatch = srcRegex.firstMatch(in: tag as String, options: [], range: NSRange(location: 0, length: tag.length)),
+                  srcMatch.numberOfRanges > 1 else { continue }
+
+            let path = tag.substring(with: srcMatch.range(at: 1))
+            guard !path.lowercased().hasPrefix("http"), !path.lowercased().hasPrefix("data:") else { continue }
+
+            let resolvedPath = resolveRelativePath(path, relativeTo: chapterPath)
+            guard let imageData = try? zip.contents(of: resolvedPath) else { continue }
+            let mime = mimeType(forExtension: (resolvedPath as NSString).pathExtension)
+            let dataURI = "data:\(mime);base64,\(imageData.base64EncodedString())"
+
+            let newTag = tag.replacingCharacters(in: srcMatch.range(at: 0), with: "src=\"\(dataURI)\"")
+            mutable.replaceCharacters(in: match.range, with: newTag)
+        }
+
+        return mutable as String
+    }
+
+    /// Resolves an image's relative `src` (e.g. `"../images/cover.jpg"`)
+    /// against the zip path of the chapter that references it, producing a
+    /// path `MinimalZip.contents(of:)` can look up directly. Walks path
+    /// components by hand rather than using `NSString`'s path-standardizing
+    /// helpers, since those assume a real filesystem root and a zip entry
+    /// path isn't one.
+    private static func resolveRelativePath(_ relative: String, relativeTo chapterPath: String) -> String {
+        let cleaned = relative.components(separatedBy: "#").first ?? relative
+        let baseDir = (chapterPath as NSString).deletingLastPathComponent
+        let combined = baseDir.isEmpty ? cleaned : "\(baseDir)/\(cleaned)"
+
+        var stack: [String] = []
+        for component in combined.split(separator: "/") {
+            if component == "." { continue }
+            if component == ".." {
+                if !stack.isEmpty { stack.removeLast() }
+            } else {
+                stack.append(String(component))
+            }
+        }
+        return stack.joined(separator: "/")
+    }
+
+    private static func mimeType(forExtension ext: String) -> String {
+        switch ext.lowercased() {
+        case "jpg", "jpeg": return "image/jpeg"
+        case "png": return "image/png"
+        case "gif": return "image/gif"
+        case "svg": return "image/svg+xml"
+        case "webp": return "image/webp"
+        default: return "application/octet-stream"
+        }
     }
 
     #if canImport(UIKit)
-    private static func htmlToPlainText(_ data: Data) throws -> String {
+    private static func htmlToPlainText(_ data: Data) throws -> [String] {
         let options: [NSAttributedString.DocumentReadingOptionKey: Any] = [
             .documentType: NSAttributedString.DocumentType.html,
             .characterEncoding: String.Encoding.utf8.rawValue
@@ -119,10 +290,28 @@ enum EPUBParser {
         guard let attributed = try? NSAttributedString(data: data, options: options, documentAttributes: nil) else {
             throw DocumentImportError.unreadable("Couldn't parse a chapter in this EPUB.")
         }
-        return attributed.string
+        // NSAttributedString's HTML conversion preserves block boundaries
+        // (<p>, <div>, <li>, headings, ...) as line breaks in `.string`, but
+        // often as a single "\n" between blocks rather than a blank line.
+        // Every paragraph splitter downstream (`Scroll.paragraphs`,
+        // `Book.from`, `DocumentSplitter`) looks for a blank line ("\n\n") to
+        // tell paragraphs apart, so a single-"\n"-separated chapter reads as
+        // one giant run-together paragraph instead of many. `.byParagraphs`
+        // enumeration treats any line break as a paragraph boundary
+        // regardless of whether it's single or double, so re-joining what it
+        // finds with a guaranteed blank line restores real paragraph shape
+        // before the text ever reaches that shared convention.
+        let full = attributed.string
+        var paragraphs: [String] = []
+        full.enumerateSubstrings(in: full.startIndex..<full.endIndex, options: .byParagraphs) { substring, _, _, _ in
+            guard let substring else { return }
+            let trimmed = substring.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !trimmed.isEmpty { paragraphs.append(trimmed) }
+        }
+        return paragraphs
     }
     #else
-    private static func htmlToPlainText(_ data: Data) throws -> String {
+    private static func htmlToPlainText(_ data: Data) throws -> [String] {
         throw DocumentImportError.unsupportedFileType
     }
     #endif
@@ -140,13 +329,35 @@ private final class ContainerXMLDelegate: NSObject, XMLParserDelegate {
 private final class OPFDelegate: NSObject, XMLParserDelegate {
     var manifest: [String: String] = [:] // item id -> href
     var spine: [String] = []             // ordered idrefs
+    /// The book's title, from <metadata><dc:title>. Only the first such
+    /// element is kept — some OPFs list additional title-type metadata
+    /// (subtitles, series names via opf:title-type refinements), and the
+    /// first <dc:title> in document order is the main title in practice.
+    var title: String?
+
+    private var isInTitle = false
+    private var titleBuffer = ""
 
     func parser(_ parser: XMLParser, didStartElement elementName: String, namespaceURI: String?, qualifiedName qName: String?, attributes attributeDict: [String: String]) {
         if elementName.hasSuffix("itemref") {
             if let idref = attributeDict["idref"] { spine.append(idref) }
         } else if elementName.hasSuffix("item") {
             if let id = attributeDict["id"], let href = attributeDict["href"] { manifest[id] = href }
+        } else if title == nil, elementName == "title" || elementName.hasSuffix(":title") {
+            isInTitle = true
+            titleBuffer = ""
         }
+    }
+
+    func parser(_ parser: XMLParser, foundCharacters string: String) {
+        if isInTitle { titleBuffer += string }
+    }
+
+    func parser(_ parser: XMLParser, didEndElement elementName: String, namespaceURI: String?, qualifiedName qName: String?) {
+        guard isInTitle, elementName == "title" || elementName.hasSuffix(":title") else { return }
+        isInTitle = false
+        let trimmed = titleBuffer.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !trimmed.isEmpty { title = trimmed }
     }
 }
 

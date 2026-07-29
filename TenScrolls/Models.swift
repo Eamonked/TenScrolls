@@ -222,7 +222,10 @@ enum Session: String, Codable, CaseIterable, Identifiable {
         let window = timeWindow(customPrefs: customPrefs)
         if window.contains(now) { return true }
         guard let startedAt, window.contains(startedAt) else { return false }
-        let graceDeadline = window.endDate(anchoredTo: now).addingTimeInterval(TimeInterval(Session.markGraceMinutes * 60))
+        // Anchor to the calendar day `startedAt` actually fell on — not `now`'s day —
+        // so a midnight rollover between reading and tapping the stamp doesn't get
+        // re-anchored to tonight's window close (which could be almost 24h away).
+        let graceDeadline = window.endDate(anchoredTo: startedAt).addingTimeInterval(TimeInterval(Session.markGraceMinutes * 60))
         return now <= graceDeadline
     }
     
@@ -419,17 +422,31 @@ struct JournalEntry: Identifiable, Codable, Equatable {
     var scrollId: Int?
     var text: String
     var isDraft: Bool = false
+    /// Marks this entry for inclusion in the Journal Reflection widget's rotation.
+    /// The widget only draws from entries the reader has explicitly pinned; when
+    /// none are pinned yet, `AppStore.persist` falls back to recent entries so the
+    /// widget isn't empty for new users.
+    var isPinnedForWidget: Bool = false
+    /// The Library book this quote was pulled from, if any — a resolved title
+    /// string rather than the book's `UUID`, since the book itself can later
+    /// be removed from the shelf; keeping just the title means the entry still
+    /// reads sensibly even after that. `nil` for scroll quotes and entries
+    /// written directly in the Journal.
+    var bookTitle: String? = nil
 
-    init(id: String, date: String, scrollId: Int?, text: String, isDraft: Bool = false) {
+    init(id: String, date: String, scrollId: Int?, text: String, isDraft: Bool = false, isPinnedForWidget: Bool = false, bookTitle: String? = nil) {
         self.id = id
         self.date = date
         self.scrollId = scrollId
         self.text = text
         self.isDraft = isDraft
+        self.isPinnedForWidget = isPinnedForWidget
+        self.bookTitle = bookTitle
     }
 
-    // Custom decoding so entries saved before `isDraft` existed still decode
-    // (a missing key becomes `false` instead of throwing and wiping the journal).
+    // Custom decoding so entries saved before `isDraft`/`isPinnedForWidget`/`bookTitle`
+    // existed still decode (a missing key becomes `false`/`nil` instead of throwing
+    // and wiping the journal).
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         id = try container.decode(String.self, forKey: .id)
@@ -437,6 +454,8 @@ struct JournalEntry: Identifiable, Codable, Equatable {
         scrollId = try container.decodeIfPresent(Int.self, forKey: .scrollId)
         text = try container.decode(String.self, forKey: .text)
         isDraft = try container.decodeIfPresent(Bool.self, forKey: .isDraft) ?? false
+        isPinnedForWidget = try container.decodeIfPresent(Bool.self, forKey: .isPinnedForWidget) ?? false
+        bookTitle = try container.decodeIfPresent(String.self, forKey: .bookTitle)
     }
 }
 
