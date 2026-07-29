@@ -94,21 +94,26 @@ struct TodayView: View {
         let colors = AdaptivePalette(mode: appearanceMode)
         if let active = store.state.activeScroll {
             let days = store.state.scrollDaysCompleted(active.id)
-            CardView {
-                Text("ACTIVE SCROLL").font(AppFont.mono(10)).tracking(1.4).foregroundColor(colors.textFaint)
-                Text("Scroll \(active.roman)\(active.title.isEmpty ? "" : " — \(active.title)")")
-                    .font(AppFont.display(19)).foregroundColor(colors.text)
-                    .padding(.top, 2)
-                if !active.theme.isEmpty {
-                    Text(active.theme).font(.system(size: 13)).italic().foregroundColor(colors.textDim)
+            Button {
+                openScroll(active)
+            } label: {
+                CardView {
+                    Text("ACTIVE SCROLL").font(AppFont.mono(10)).tracking(1.4).foregroundColor(colors.textFaint)
+                    Text("Scroll \(active.roman)\(active.title.isEmpty ? "" : " — \(active.title)")")
+                        .font(AppFont.display(19)).foregroundColor(colors.text)
                         .padding(.top, 2)
+                    if !active.theme.isEmpty {
+                        Text(active.theme).font(.system(size: 13)).italic().foregroundColor(colors.textDim)
+                            .padding(.top, 2)
+                    }
+                    ProgressTrack(pct: min(100, Double(days) / 30 * 100), brassDim: theme.brassDim, glow: theme.glow)
+                        .padding(.top, 12)
+                    Text("\(days) of 30 days complete")
+                        .font(AppFont.mono(11)).foregroundColor(colors.textFaint)
+                        .padding(.top, 7)
                 }
-                ProgressTrack(pct: min(100, Double(days) / 30 * 100), brassDim: theme.brassDim, glow: theme.glow)
-                    .padding(.top, 12)
-                Text("\(days) of 30 days complete")
-                    .font(AppFont.mono(11)).foregroundColor(colors.textFaint)
-                    .padding(.top, 7)
             }
+            .buttonStyle(.plain)
         } else if let reread = store.state.rereadScroll, let cs = store.state.cycleState {
             let done = cs.daysThisScroll.count
             let goal = Constants.cycleGoalDays

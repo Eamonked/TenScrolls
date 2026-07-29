@@ -82,6 +82,15 @@ struct BookChapterWebView: UIViewRepresentable {
     /// with `data-p` fire this — plain chapter HTML with no such markup never
     /// does, so this is a no-op for `LibraryReaderView`.
     var onParagraphTap: ((Int) -> Void)? = nil
+    /// Fired when an element carrying a `data-action="..."` attribute is
+    /// tapped — see `Self.actionTapBridgeScript`. A generic counterpart to
+    /// `onParagraphTap` for header/chrome elements flowed into the document
+    /// (e.g. `ScrollEditorSheet.statusPillHTML`) that need to trigger a
+    /// native action rather than bookmark a reading position. The string
+    /// passed back is whatever the caller put in `data-action`, so one
+    /// bridge can serve several different tappable elements in the same
+    /// document.
+    var onActionTap: ((String) -> Void)? = nil
 
     /// Side margin each page gets — half of `column-gap`, the other half
     /// belonging to the adjacent page. Mirrors `TextPaginator.horizontalPadding / 2`.
@@ -127,6 +136,12 @@ struct BookChapterWebView: UIViewRepresentable {
             injectionTime: .atDocumentEnd,
             forMainFrameOnly: true
         ))
+        controller.add(context.coordinator, name: Coordinator.actionTapMessageName)
+        controller.addUserScript(WKUserScript(
+            source: Self.actionTapBridgeScript,
+            injectionTime: .atDocumentEnd,
+            forMainFrameOnly: true
+        ))
         config.userContentController = controller
 
         let webView = BookWebView(frame: .zero, configuration: config)
@@ -162,6 +177,7 @@ struct BookChapterWebView: UIViewRepresentable {
         // would leak for as long as the webview's configuration is alive.
         webView.configuration.userContentController.removeScriptMessageHandler(forName: Coordinator.selectionMessageName)
         webView.configuration.userContentController.removeScriptMessageHandler(forName: Coordinator.paragraphTapMessageName)
+        webView.configuration.userContentController.removeScriptMessageHandler(forName: Coordinator.actionTapMessageName)
     }
 
     func updateUIView(_ webView: BookWebView, context: Context) {
@@ -222,6 +238,9 @@ struct BookChapterWebView: UIViewRepresentable {
         /// Mirrors `selectionMessageName` for `Self.paragraphTapBridgeScript`'s
         /// tap-position postMessage.
         static let paragraphTapMessageName = "paragraphTap"
+        /// Mirrors `selectionMessageName` for `Self.actionTapBridgeScript`'s
+        /// `data-action` postMessage.
+        static let actionTapMessageName = "actionTap"
 
         var parent: BookChapterWebView
         var loadedHTML: String?
@@ -411,6 +430,14 @@ struct BookChapterWebView: UIViewRepresentable {
                 // not a malformed page — fail quiet rather than crash.
                 guard let index = (message.body as? NSNumber)?.intValue else { return }
                 parent.onParagraphTap?(index)
+            case Self.actionTapMessageName:
+                // The script only ever posts the tapped element's own
+                // `data-action` string verbatim (see
+                // `Self.actionTapBridgeScript`) — never anything derived
+                // from user-entered text — so this is safe to hand straight
+                // to `onActionTap` without further sanitization.
+                guard let action = message.body as? String else { return }
+                parent.onActionTap?(action)
             default:
                 break
             }
@@ -570,6 +597,28 @@ struct BookChapterWebView: UIViewRepresentable {
         if (isNaN(index)) { return; }
         if (window.webkit && window.webkit.messageHandlers.paragraphTap) {
           window.webkit.messageHandlers.paragraphTap.postMessage(index);
+        }
+      });
+    })();
+    """
+
+    /// Posts a `data-action` element's own attribute value to Swift when it's
+    /// tapped, for callers that flow header/chrome markup into the document
+    /// (e.g. `ScrollEditorSheet.statusPillHTML`) needing to trigger a native
+    /// action rather than bookmark a reading position — see `onActionTap`.
+    /// Mirrors `paragraphTapBridgeScript`'s event-delegation/`closest`
+    /// approach, but posts the raw string verbatim instead of parsing it as
+    /// a paragraph index, since `data-action` is caller-defined text, not a
+    /// number.
+    static let actionTapBridgeScript = """
+    (function () {
+      document.addEventListener('click', function (event) {
+        var target = event.target.closest('[data-action]');
+        if (!target) { return; }
+        var action = target.getAttribute('data-action');
+        if (!action) { return; }
+        if (window.webkit && window.webkit.messageHandlers.actionTap) {
+          window.webkit.messageHandlers.actionTap.postMessage(action);
         }
       });
     })();
