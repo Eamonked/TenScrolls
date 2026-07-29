@@ -12,7 +12,9 @@ enum TimeUtils {
         return (hour, minute)
     }
 
-    /// Today's Date anchored at the given "HH:mm" time. If parsing fails, returns now.
+    /// Today's Date anchored at the given "HH:mm" time. If parsing fails, returns
+    /// today at midnight (not `now`) — callers that need to detect a bad string
+    /// should check `parseHHmm` themselves rather than relying on this fallback.
     static func dateFromHHmm(_ string: String, calendar: Calendar = .current) -> Date {
         let now = Date()
         var comps = calendar.dateComponents([.year, .month, .day], from: now)

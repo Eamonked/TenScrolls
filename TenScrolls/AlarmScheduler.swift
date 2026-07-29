@@ -225,7 +225,7 @@ final class AlarmScheduler: ObservableObject {
 
     @discardableResult
     private func scheduleSession(_ session: Session, hhmm: String) async throws -> UUID {
-        let (hour, minute) = Self.parse(hhmm)
+        let (hour, minute) = try Self.parse(hhmm)
 
         let time = Alarm.Schedule.Relative.Time(hour: hour, minute: minute)
         let schedule = Alarm.Schedule.Relative(time: time, repeats: Self.everyDay)
@@ -237,7 +237,13 @@ final class AlarmScheduler: ObservableObject {
         )
 
         let alert = AlarmPresentation.Alert(
-            title: LocalizedStringResource(stringLiteral: "\(session.label) Reading"),
+            // `LocalizedStringResource(stringLiteral:)` wraps an already-flattened
+            // Swift String, so `session.label` gets baked into one opaque string
+            // that localization tooling can't see as a placeholder. The default
+            // `LocalizedStringResource.init(_:)` init takes a `String.LocalizationValue`
+            // instead, which keeps interpolated arguments distinct for extraction/
+            // translation while still rendering identically today.
+            title: LocalizedStringResource("\(session.label) Reading"),
             secondaryButton: openButton,
             secondaryButtonBehavior: .custom
         )
@@ -278,7 +284,7 @@ final class AlarmScheduler: ObservableObject {
     /// creating unwanted alarms.
     @discardableResult
     private func scheduleEscalationCall(for session: Session, hhmm: String, afterMinutes: Int) async throws -> UUID {
-        let (hour, minute) = Self.parse(hhmm)
+        let (hour, minute) = try Self.parse(hhmm)
 
         // Anchor to *today's* occurrence of this session's reminder time —
         // not "the next time this hour:minute occurs after right now".
@@ -313,7 +319,7 @@ final class AlarmScheduler: ObservableObject {
         let openButton = AlarmButton(text: "Open the app", textColor: .black, systemImageName: "arrow.right")
 
         let alert = AlarmPresentation.Alert(
-            title: LocalizedStringResource(stringLiteral: "Missed \(session.label) — calling you back"),
+            title: LocalizedStringResource("Missed \(session.label) — calling you back"),
             secondaryButton: openButton,
             secondaryButtonBehavior: .custom
         )
@@ -358,10 +364,19 @@ final class AlarmScheduler: ObservableObject {
 
     // MARK: Helpers
 
-    private static func parse(_ hhmm: String) -> (Int, Int) {
-        let parts = hhmm.split(separator: ":")
-        let h = Int(parts.first ?? "7") ?? 7
-        let m = parts.count > 1 ? (Int(parts[1]) ?? 0) : 0
+    /// A malformed "HH:mm" string (e.g. from a bad migration or corrupted
+    /// prefs) used to silently fall back to 7:00 here, which could schedule
+    /// reminders at a time the user never chose with no indication anything
+    /// was wrong. Delegating to `TimeUtils.parseHHmm` and throwing on
+    /// failure means `reschedule(from:)`'s existing `catch` skips this
+    /// session's alarms entirely and logs it, instead of silently
+    /// scheduling a wrong time.
+    struct InvalidTimeError: Error { let hhmm: String }
+
+    private static func parse(_ hhmm: String) throws -> (Int, Int) {
+        guard let (h, m) = TimeUtils.parseHHmm(hhmm) else {
+            throw InvalidTimeError(hhmm: hhmm)
+        }
         return (h, m)
     }
 }

@@ -57,6 +57,14 @@ struct ScrollEditorSheet: View {
     // tap locally too, purely so the "you stopped here" feedback shows up
     // the instant it happens rather than the next time the scroll is opened.
     @State private var justBookmarkedIndex: Int?
+    // Guards `onReadingComplete` so it fires exactly once per sheet
+    // presentation. `canComplete` is referenced from several places in the
+    // view body (toolbar button state, interactiveDismissDisabled,
+    // safeAreaInset) and SwiftUI may re-evaluate a computed property on
+    // each of those, so the actual notification is driven off a single
+    // `.onChange(of: canComplete)` below rather than from inside the
+    // computed property itself.
+    @State private var readingCompleteFired = false
     private let bookmarkHaptic = UIImpactFeedbackGenerator(style: .light)
     
     private let timer = Timer.publish(every: 1, on: .main, in: .common).autoconnect()
@@ -67,14 +75,7 @@ struct ScrollEditorSheet: View {
         return currentTime.timeIntervalSince(startTime) >= minimumReadingTimeSeconds
     }
     private var canComplete: Bool {
-        let result = editing || hasReachedLastPage && hasMetTimeRequirement
-        // Notify when reading is complete (for session validation)
-        if result && !editing && onReadingComplete != nil {
-            Task { @MainActor in
-                onReadingComplete?()
-            }
-        }
-        return result
+        editing || hasReachedLastPage && hasMetTimeRequirement
     }
 
     init(scroll: Scroll, onSave: @escaping (Scroll) -> Void, onReadingComplete: (() -> Void)? = nil, onReadingStarted: (() -> Void)? = nil) {
@@ -190,6 +191,11 @@ struct ScrollEditorSheet: View {
         }
         .onReceive(timer) { time in
             currentTime = time
+        }
+        .onChange(of: canComplete) { _, newValue in
+            guard newValue, !editing, !readingCompleteFired, onReadingComplete != nil else { return }
+            readingCompleteFired = true
+            onReadingComplete?()
         }
         .interactiveDismissDisabled(!canComplete && hasContent && !editing)
     }
@@ -806,18 +812,18 @@ struct NotificationSettingsModal: View {
 }
 
 /// "HH:mm" → today's `Date` at that time (for DatePicker binding).
+/// Delegates to `TimeUtils.dateFromHHmm` so parsing/anchoring behavior stays
+/// consistent with `AlarmScheduler` and `NotificationManager` — this used to
+/// build `DateComponents` with only hour/minute and no year/month/day, which
+/// left the resulting `Date` on an unanchored day and could make the picker
+/// show the wrong date/time.
 private func dateFromHHmm(_ string: String) -> Date {
-    let parts = string.split(separator: ":")
-    var comps = DateComponents()
-    comps.hour = Int(parts.first ?? "0") ?? 0
-    comps.minute = parts.count > 1 ? (Int(parts[1]) ?? 0) : 0
-    return Calendar.current.date(from: comps) ?? Date()
+    TimeUtils.dateFromHHmm(string)
 }
 
 /// `Date` → "HH:mm".
 private func hhmm(from date: Date) -> String {
-    let c = Calendar.current.dateComponents([.hour, .minute], from: date)
-    return String(format: "%02d:%02d", c.hour ?? 0, c.minute ?? 0)
+    TimeUtils.hhmm(from: date)
 }
 
 struct InfoSheet: View {

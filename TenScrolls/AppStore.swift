@@ -6,6 +6,11 @@ import WidgetKit
 final class AppStore: ObservableObject {
     @Published var state: AppState
     @Published var toast: String?
+    /// Set when saved data existed but failed to decode at launch (see `init`).
+    /// Unlike `toast`, this doesn't auto-dismiss — it's surfaced as a blocking
+    /// `.alert` (see `ContentView`) so the user actually sees it and knows their
+    /// raw data was preserved under a recovery key rather than silently discarded.
+    @Published var dataRecoveryNotice: String?
     /// When non-nil, the full-screen incoming-call screen is presented for this session.
     @Published var incomingCall: PendingCall?
     /// Bound to the root TabView so notifications can route the user to the Today tab.
@@ -37,6 +42,7 @@ final class AppStore: ObservableObject {
                 // lost, and surface the failure instead of guessing it's a fresh install.
                 UserDefaults.standard.set(data, forKey: defaultsKey + ".recovery")
                 assertionFailure("Failed to decode saved AppState, preserved raw data under '\(defaultsKey).recovery': \(error)")
+                self.dataRecoveryNotice = "We couldn't load your saved reading progress. A backup of the raw data was kept on this device — please contact support if this keeps happening."
                 loadedState = AppState.defaultState()
             }
         } else {
@@ -66,7 +72,7 @@ final class AppStore: ObservableObject {
     /// Which of today's sessions are already complete.
     private var doneSessionsToday: Set<Session> {
         let entry = state.log[DateKey.today()]
-        return Set(Session.allCases.filter { entry?[keyPath: $0.keyPath] ?? false })
+        return Set(Session.allCases.filter { entry?.isCompleted(for: $0) ?? false })
     }
 
     /// Rebuild scheduled notifications from current prefs + today's progress. Cheap and
@@ -294,17 +300,7 @@ final class AppStore: ObservableObject {
         state.log[key] = entry
     }
 
-    func toggleSession(_ session: WritableKeyPath<DayEntry, Bool>) {
-        // Determine which session this is
-        let sessionType: Session = {
-            switch session {
-            case \DayEntry.dawn: return .dawn
-            case \DayEntry.midday: return .midday
-            case \DayEntry.dusk: return .dusk
-            default: return .dawn // fallback, should never happen
-            }
-        }()
-        
+    func toggleSession(_ sessionType: Session) {
         // Log against the active scroll on the first pass, or the reread scroll in cycle mode.
         guard let targetId = state.targetScrollId else { return }
         let key = DateKey.today()
@@ -333,7 +329,7 @@ final class AppStore: ObservableObject {
         }
         
         // Toggle with timestamp tracking
-        let wasSet = entry[keyPath: session]
+        let wasSet = entry.isCompleted(for: sessionType)
         if wasSet {
             entry.clearCompleted(sessionType)
         } else {
@@ -379,7 +375,7 @@ final class AppStore: ObservableObject {
         afterMutation()
         
         // Cancel the escalation call immediately when a session is completed
-        if !wasSet && entry[keyPath: session] {
+        if !wasSet && entry.isCompleted(for: sessionType) {
             if #available(iOS 26.1, *) {
                 let rawSession = sessionType.rawValue
                 Task { await AlarmScheduler.shared.handleStop(sessionId: rawSession) }

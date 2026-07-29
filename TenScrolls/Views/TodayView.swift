@@ -168,7 +168,7 @@ struct TodayView: View {
                 windowStatus: Session.dawn.windowStatus(startedAt: entry.dawnStartedAt, customPrefs: customPrefs)
             ) {
                 let wasDone = entry.dawn
-                store.toggleSession(\.dawn)
+                store.toggleSession(.dawn)
                 if wasDone { promptSkip(key) }
             }
             StampButton(
@@ -180,7 +180,7 @@ struct TodayView: View {
                 windowStatus: Session.midday.windowStatus(startedAt: entry.middayStartedAt, customPrefs: customPrefs)
             ) {
                 let wasDone = entry.midday
-                store.toggleSession(\.midday)
+                store.toggleSession(.midday)
                 if wasDone { promptSkip(key) }
             }
             StampButton(
@@ -192,7 +192,7 @@ struct TodayView: View {
                 windowStatus: Session.dusk.windowStatus(startedAt: entry.duskStartedAt, customPrefs: customPrefs)
             ) {
                 let wasDone = entry.dusk
-                store.toggleSession(\.dusk)
+                store.toggleSession(.dusk)
                 if wasDone { promptSkip(key) }
             }
         }

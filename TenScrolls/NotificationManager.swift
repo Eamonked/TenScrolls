@@ -59,7 +59,7 @@ final class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
         guard prefs.enabled else { return }
 
         for session in Session.allCases {
-            guard let (hour, minute) = parseTime(prefs.time(for: session)) else { continue }
+            guard let (hour, minute) = TimeUtils.parseHHmm(prefs.time(for: session)) else { continue }
 
             // Daily repeating reminder.
             let reminder = UNMutableNotificationContent()
@@ -137,12 +137,6 @@ final class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
     /// is completed to prevent the call from firing later.
     func cancelEscalationCall(for session: Session) {
         center.removePendingNotificationRequests(withIdentifiers: [callID(session)])
-    }
-
-    private func parseTime(_ string: String) -> (hour: Int, minute: Int)? {
-        let parts = string.split(separator: ":")
-        guard parts.count == 2, let hour = Int(parts[0]), let minute = Int(parts[1]) else { return nil }
-        return (hour, minute)
     }
 
     /// The next future occurrence of `hour:minute` shifted by `plusMinutes`.

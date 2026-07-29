@@ -123,6 +123,18 @@ struct ContentView: View {
             }
         }
         .fullScreenCover(isPresented: $showWeeklyRecap) { WeeklyRecapView() }
+        .alert(
+            "Data Recovery",
+            isPresented: Binding(
+                get: { store.dataRecoveryNotice != nil },
+                set: { if !$0 { store.dataRecoveryNotice = nil } }
+            ),
+            presenting: store.dataRecoveryNotice
+        ) { _ in
+            Button("OK") { store.dataRecoveryNotice = nil }
+        } message: { notice in
+            Text(notice)
+        }
         .onAppear {
             store.checkPendingAlarmSession()
             runStartOfDayChecks()

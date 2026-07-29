@@ -79,6 +79,19 @@ struct DayEntry: Codable, Equatable {
     var allComplete: Bool { dawn && midday && dusk }
     var sessionCount: Int { [dawn, midday, dusk].filter { $0 }.count }
     
+    /// Whether a specific session is marked done. Lets callers (e.g.
+    /// `AppStore.toggleSession`) work in terms of `Session` instead of a
+    /// `WritableKeyPath<DayEntry, Bool>` — a keypath-based switch is brittle
+    /// against refactors and silently misroutes to a default case if the
+    /// mapping and the struct's fields ever drift apart.
+    func isCompleted(for session: Session) -> Bool {
+        switch session {
+        case .dawn: return dawn
+        case .midday: return midday
+        case .dusk: return dusk
+        }
+    }
+
     /// Get completion timestamp for a specific session
     func completedAt(for session: Session) -> Date? {
         switch session {
@@ -164,15 +177,6 @@ enum Session: String, Codable, CaseIterable, Identifiable {
         case .dawn: return "sunrise.fill"
         case .midday: return "sun.max.fill"
         case .dusk: return "sunset.fill"
-        }
-    }
-
-    /// Maps a session onto its flag in the day log.
-    var keyPath: WritableKeyPath<DayEntry, Bool> {
-        switch self {
-        case .dawn: return \.dawn
-        case .midday: return \.midday
-        case .dusk: return \.dusk
         }
     }
 
