@@ -1,6 +1,7 @@
 import Foundation
 import Combine
 import WidgetKit
+import UIKit
 
 @MainActor
 final class AppStore: ObservableObject {
@@ -15,10 +16,31 @@ final class AppStore: ObservableObject {
     @Published var incomingCall: PendingCall?
     /// Bound to the root TabView so notifications can route the user to the Today tab.
     @Published var selectedTab: Int = 0
+    /// Set when a `tenscrolls://addfriend?code=...` link is opened (see
+    /// `handleIncomingURL`). `CaravanView` consumes and clears this to prefill
+    /// and submit the add-friend field.
+    @Published var pendingFriendCode: String? = nil
+    /// Scrolls shared to this device (directly or via a reading group) still
+    /// awaiting a decision. Refreshed on Caravan-tab appear and app
+    /// foreground — see `refreshPendingShares()`.
+    @Published var pendingScrollShares: [PendingScrollShare] = []
+    /// Reading groups this device belongs to, for the share-recipient picker
+    /// and the Caravan tab's group list.
+    @Published var myReadingGroups: [ReadingGroupSummary] = []
+    /// Cheers sent to this device that haven't been acknowledged yet — the
+    /// in-app fallback for when a push notification was missed or dismissed
+    /// without tapping "Got it". Refreshed on Caravan-tab appear and app
+    /// foreground, same cadence as `pendingScrollShares`.
+    @Published var pendingCheers: [PendingCheer] = []
+    /// Set the moment `bestStreak` newly crosses one of `Constants.milestones`
+    /// (7/14/30/60/100 days). `ContentView` presents `MilestoneCelebrationView`
+    /// while this is non-nil, then clears it on dismiss.
+    @Published var milestoneReached: Int? = nil
 
     private var prevLevel: Int
     private var prevMasteredIds: [Int]
     private var prevEarnedIds: [String]
+    private var prevBestStreak: Int
     private var toastTask: Task<Void, Never>?
     private var persistTask: Task<Void, Never>?
 
@@ -29,6 +51,7 @@ final class AppStore: ObservableObject {
 
     private nonisolated let defaultsKey = "ten-scrolls-state"
     let leaderboard = SupabaseLeaderboard()
+    let sharing = SupabaseSharing()
     let notifier = NotificationManager()
 
     init() {
@@ -54,6 +77,7 @@ final class AppStore: ObservableObject {
         self.prevLevel = info.level
         self.prevMasteredIds = loadedState.scrolls.filter { $0.status == .mastered }.map { $0.id }
         self.prevEarnedIds = loadedState.achievements.filter { $0.earned }.map { $0.def.id }
+        self.prevBestStreak = loadedState.bestStreak
         publishSnapshotIfNeeded()
 
         notifier.registerDelegate()
@@ -64,7 +88,25 @@ final class AppStore: ObservableObject {
         notifier.onReminderTap = { [weak self] (_: Session) in
             self?.selectedTab = 0
         }
+        notifier.onCheerAcknowledged = { [weak self] (cheerIdString: String) in
+            guard let id = UUID(uuidString: cheerIdString) else { return }
+            self?.acknowledgeCheer(id: id)
+        }
         syncNotifications()
+
+        NotificationCenter.default.addObserver(
+            forName: AppDelegate.deviceTokenNotification, object: nil, queue: .main
+        ) { [weak self] notification in
+            guard let token = notification.object as? String else { return }
+            Task { @MainActor in
+                #if DEBUG
+                await self?.leaderboard.registerPushToken(token, environment: "sandbox")
+                #else
+                await self?.leaderboard.registerPushToken(token, environment: "production")
+                #endif
+            }
+        }
+        registerForRemoteNotificationsIfAuthorized()
     }
 
     // MARK: - Notifications
@@ -114,10 +156,26 @@ final class AppStore: ObservableObject {
                 granted = await notifier.requestAuthorization()
             }
             guard granted else { return }
+            // Local scheduling (reminders/calls/AlarmKit) is independent of
+            // remote push — cheers need APNs specifically, so register for a
+            // device token whenever the user has granted notification
+            // permission at all, regardless of which local path is active.
+            UIApplication.shared.registerForRemoteNotifications()
         }
         var prefs = state.notifPrefs
         prefs.enabled = enabled
         updateNotifPrefs(prefs)
+    }
+
+    /// Re-registers for a device token on every launch if permission was
+    /// already granted in a previous session — Apple's recommended pattern,
+    /// since tokens can rotate and this is cheap/idempotent to repeat.
+    func registerForRemoteNotificationsIfAuthorized() {
+        Task {
+            let status = await notifier.authorizationStatus()
+            guard status == .authorized else { return }
+            await MainActor.run { UIApplication.shared.registerForRemoteNotifications() }
+        }
     }
 
     /// Check if the app was launched from an AlarmKit "Open the app" intent
@@ -252,9 +310,17 @@ final class AppStore: ObservableObject {
             }
         }
 
+        // Streak milestones (7/14/30/60/100 days) get their own celebratory
+        // sheet with a share action, independent of the toast above — a
+        // toast is easy to miss and gives no way to act on the moment.
+        if let newMilestone = Constants.milestones.filter({ state.bestStreak >= $0 && prevBestStreak < $0 }).max() {
+            milestoneReached = newMilestone
+        }
+
         prevLevel = info.level
         prevMasteredIds = masteredIds
         prevEarnedIds = earnedIds
+        prevBestStreak = state.bestStreak
     }
 
     private func publishSnapshotIfNeeded() {
@@ -681,5 +747,141 @@ final class AppStore: ObservableObject {
     func removeFriend(_ code: String) {
         state.friendCodes.removeAll { $0 == code }
         schedulePersist()
+    }
+
+    // MARK: - Cheers (push + acknowledgment)
+
+    /// Polls for cheers sent to this device that haven't been acknowledged
+    /// yet. Same idea as `refreshPendingShares` — the push is the primary
+    /// delivery path, but a poll on Caravan-tab appear/foreground catches
+    /// anything missed (notification dismissed unseen, permission denied, etc).
+    func refreshPendingCheers() async {
+        pendingCheers = await leaderboard.fetchUnacknowledgedCheers()
+    }
+
+    /// Marks a cheer received, locally and server-side. Removes it from
+    /// `pendingCheers` immediately (optimistic) since this is called both
+    /// from the notification's "Got it" action and from the in-app banner.
+    func acknowledgeCheer(id: UUID) {
+        pendingCheers.removeAll { $0.cheer_id == id }
+        Task { await leaderboard.acknowledgeCheer(id: id) }
+    }
+
+    // MARK: - Invite links
+
+    /// Handles `tenscrolls://addfriend?code=XXXXX` links, generated by the
+    /// Caravan's "Share invite link" action (see `CaravanView.inviteURL`).
+    /// Routes to the Caravan tab and stages the code for `CaravanView` to
+    /// prefill and submit — see `pendingFriendCode`.
+    ///
+    /// This is a custom URL scheme only; there's no Universal Link fallback
+    /// yet; that needs a domain Eamon controls to host an
+    /// apple-app-site-association file, plus the Associated Domains
+    /// capability. Until that exists, tapping the link on a device without
+    /// the app installed just fails silently rather than falling through to
+    /// an App Store / web landing page.
+    func handleIncomingURL(_ url: URL) {
+        guard url.scheme == "tenscrolls", url.host == "addfriend" else { return }
+        guard let components = URLComponents(url: url, resolvingAgainstBaseURL: false),
+              let code = components.queryItems?.first(where: { $0.name == "code" })?.value,
+              !code.isEmpty else { return }
+        pendingFriendCode = code.uppercased()
+        selectedTab = 3
+    }
+
+    // MARK: - Scroll sharing & reading groups
+
+    /// Polls for scrolls shared to this device. Cheap and safe to call often
+    /// (Caravan-tab appear, app foreground) — no push infra exists yet, so
+    /// this poll is the only delivery mechanism.
+    func refreshPendingShares() async {
+        pendingScrollShares = await sharing.fetchPendingShares()
+    }
+
+    func refreshReadingGroups() async {
+        myReadingGroups = await sharing.fetchMyGroups()
+    }
+
+    enum GroupActionResult {
+        case success(String)
+        case failure(String)
+    }
+
+    /// Creates a new reading group and adds it to `myReadingGroups` on success.
+    func createReadingGroup(name: String) async -> GroupActionResult {
+        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return .failure("Give the group a name first.") }
+        switch await sharing.createGroup(name: trimmed) {
+        case .created(let id, let code, let groupName):
+            myReadingGroups.append(ReadingGroupSummary(group_id: id, name: groupName, group_code: code, member_count: 1))
+            return .success("Created \u{201C}\(groupName)\u{201D} \u{2014} code \(code)")
+        case .failure(let error):
+            return .failure(Self.friendlyGroupError(error))
+        case .joined:
+            return .failure("Unexpected response creating the group.")
+        }
+    }
+
+    /// Joins an existing reading group by its 6-character code and refreshes
+    /// the full group list (rather than appending locally) since the joined
+    /// group's real member count matters immediately.
+    func joinReadingGroup(code: String) async -> GroupActionResult {
+        let trimmed = code.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return .failure("Enter a group code first.") }
+        switch await sharing.joinGroup(code: trimmed) {
+        case .joined(_, let name):
+            await refreshReadingGroups()
+            return .success("Joined \u{201C}\(name)\u{201D}")
+        case .failure(let error):
+            return .failure(Self.friendlyGroupError(error))
+        case .created:
+            return .failure("Unexpected response joining the group.")
+        }
+    }
+
+    private static func friendlyGroupError(_ code: String) -> String {
+        switch code {
+        case "no_identity": return "Set your trader handle first, then try again."
+        case "group_not_found": return "No group found with that code."
+        case "name_required": return "Give the group a name first."
+        case "network_error": return "Couldn't reach the server. Try again shortly."
+        default: return "Something went wrong. Try again shortly."
+        }
+    }
+
+    /// Shares one scroll's full title + notes to each selected recipient
+    /// (trader codes and/or group ids) as separate calls, so one bad code
+    /// doesn't block the rest. Returns true only if every recipient succeeded.
+    func shareScroll(_ scroll: Scroll, toTraderCodes traderCodes: [String], toGroupIds groupIds: [UUID]) async -> Bool {
+        var allSucceeded = true
+        for code in traderCodes {
+            let ok = await sharing.shareScroll(scrollNumber: scroll.id, title: scroll.title, notes: scroll.notes, toTraderCode: code)
+            allSucceeded = allSucceeded && ok
+        }
+        for groupId in groupIds {
+            let ok = await sharing.shareScroll(scrollNumber: scroll.id, title: scroll.title, notes: scroll.notes, toGroupId: groupId)
+            allSucceeded = allSucceeded && ok
+        }
+        return allSucceeded
+    }
+
+    /// Imports a shared scroll's title + notes into one of this device's own
+    /// ten scroll slots — "slots into the app like it was always theirs."
+    /// Only overwrites that slot's content; unlock/mastery status for the
+    /// slot is untouched, same as any other scroll edit. Marks the share
+    /// resolved server-side so it stops reappearing on future polls.
+    func importSharedScroll(_ share: PendingScrollShare, intoSlot slot: Int) {
+        guard let idx = state.scrolls.firstIndex(where: { $0.id == slot }) else { return }
+        state.scrolls[idx].title = share.title
+        state.scrolls[idx].notes = Scroll.normalizedNotes(share.notes)
+        pendingScrollShares.removeAll { $0.id == share.id }
+        afterMutation()
+        showToast("Added \u{201C}\(share.title.isEmpty ? "Scroll \(state.scrolls[idx].roman)" : share.title)\u{201D} to Scroll \(state.scrolls[idx].roman)")
+        Task { await sharing.resolveShare(id: share.id, status: "imported") }
+    }
+
+    func dismissSharedScroll(_ share: PendingScrollShare) {
+        pendingScrollShares.removeAll { $0.id == share.id }
+        Task { await sharing.resolveShare(id: share.id, status: "dismissed") }
     }
 }

@@ -1,10 +1,19 @@
 import SwiftUI
+#if canImport(UIKit)
+import UIKit
+#endif
 
 struct ScrollsView: View {
     @EnvironmentObject var store: AppStore
     @Environment(\.appearanceMode) var appearanceMode
     var onOpenScroll: (Int) -> Void
     var openLibrary: () -> Void = {}
+
+    #if canImport(UIKit)
+    @State private var shareImage: UIImage?
+    @State private var showShare = false
+    #endif
+    @State private var shareScrollTarget: Scroll?
 
     var theme: ThemeOption { Palette.theme(for: store.state.activeThemeId) }
 
@@ -25,6 +34,20 @@ struct ScrollsView: View {
                         .onTapGesture {
                             onOpenScroll(scroll.id)
                         }
+                        .contextMenu {
+                            if scroll.status != .locked {
+                                Button {
+                                    shareScroll(scroll)
+                                } label: {
+                                    Label("Share what I'm reading", systemImage: "square.and.arrow.up")
+                                }
+                                Button {
+                                    shareScrollTarget = scroll
+                                } label: {
+                                    Label("Share this scroll", systemImage: "person.2")
+                                }
+                            }
+                        }
                 }
 
                 LibraryEntryRow(bookCount: store.state.libraryBooks.count, theme: theme, colors: colors)
@@ -37,7 +60,31 @@ struct ScrollsView: View {
             .padding(.top, 10)
         }
         .background(colors.background)
+        #if canImport(UIKit)
+        .sheet(isPresented: $showShare) {
+            if let shareImage {
+                ActivityShareSheet(items: [shareImage])
+            }
+        }
+        #endif
+        .sheet(item: $shareScrollTarget) { scroll in
+            ShareScrollSheet(scroll: scroll)
+                .environment(\.appearanceMode, appearanceMode)
+        }
     }
+
+    #if canImport(UIKit)
+    private func shareScroll(_ scroll: Scroll) {
+        let subject = ReadingShareSubject.scroll(
+            roman: scroll.roman,
+            title: scroll.title,
+            day: store.state.scrollDaysCompleted(scroll.id),
+            totalDays: 30
+        )
+        shareImage = NowReadingCard.renderImage(subject: subject, traderName: store.state.traderName, theme: theme)
+        showShare = shareImage != nil
+    }
+    #endif
 }
 
 /// Entry point into the Library — kept visually distinct from the ScrollRows

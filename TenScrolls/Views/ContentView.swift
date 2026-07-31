@@ -123,6 +123,17 @@ struct ContentView: View {
             }
         }
         .fullScreenCover(isPresented: $showWeeklyRecap) { WeeklyRecapView() }
+        .fullScreenCover(
+            isPresented: Binding(
+                get: { store.milestoneReached != nil },
+                set: { if !$0 { store.milestoneReached = nil } }
+            )
+        ) {
+            if let milestone = store.milestoneReached {
+                MilestoneCelebrationView(milestone: milestone)
+                    .environment(\.appearanceMode, store.state.appearanceMode)
+            }
+        }
         .alert(
             "Data Recovery",
             isPresented: Binding(

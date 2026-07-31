@@ -22,6 +22,11 @@ final class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
     var onIncomingCall: ((Session) -> Void)?
     /// Called when an ordinary reminder is tapped — used to route to the Today tab.
     var onReminderTap: ((Session) -> Void)?
+    /// Called when a cheer push notification is acknowledged — either by
+    /// tapping the "Got it" action, or by opening the app via the
+    /// notification's default tap. `cheerId` is threaded through as a String
+    /// since `UNNotification` userInfo values must be property-list types.
+    var onCheerAcknowledged: ((String) -> Void)?
 
     private let center = UNUserNotificationCenter.current()
 
@@ -31,8 +36,13 @@ final class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
         let acceptAction = UNNotificationAction(identifier: "accept", title: "Accept", options: .foreground)
         let declineAction = UNNotificationAction(identifier: "decline", title: "Decline", options: .destructive)
         let callCategory = UNNotificationCategory(identifier: "call", actions: [acceptAction, declineAction], intentIdentifiers: [], options: [])
-        
-        center.setNotificationCategories([callCategory])
+
+        // A cheer push needs an explicit acknowledgment, not just delivery —
+        // "Got it" lets the recipient confirm receipt without opening the app.
+        let gotItAction = UNNotificationAction(identifier: "got-it", title: "Got it", options: [])
+        let cheerCategory = UNNotificationCategory(identifier: "cheer", actions: [gotItAction], intentIdentifiers: [], options: [])
+
+        center.setNotificationCategories([callCategory, cheerCategory])
     }
 
     // MARK: - Authorization
@@ -98,7 +108,7 @@ final class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
     ) async -> UNNotificationPresentationOptions {
         let info = notification.request.content.userInfo
         // A call arriving while the app is open should present the call screen directly,
-        // not a banner. Reminders show a normal banner.
+        // not a banner. Reminders and cheers show a normal banner.
         if (info["type"] as? String) == "call" {
             if let raw = info["session"] as? String, let session = Session(rawValue: raw) {
                 onIncomingCall?(session)
@@ -113,6 +123,18 @@ final class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
         didReceive response: UNNotificationResponse
     ) async {
         let info = response.notification.request.content.userInfo
+
+        // Cheer pushes come from APNs directly (not scheduled locally), so
+        // they carry `cheer_id`/`type` at the top level rather than a
+        // `session` key. Any interaction with a cheer notification — tapping
+        // the banner itself or the explicit "Got it" action — counts as
+        // acknowledgment; only a bare dismissal (swipe-away) does not fire
+        // `didReceive` at all, so acknowledgment stays opt-in to an actual tap.
+        if (info["type"] as? String) == "cheer", let cheerId = info["cheer_id"] as? String {
+            onCheerAcknowledged?(cheerId)
+            return
+        }
+
         guard let raw = info["session"] as? String, let session = Session(rawValue: raw) else { return }
 
         // If the user tapped the "Decline" button on the lock screen, do nothing.

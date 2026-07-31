@@ -1,9 +1,16 @@
 import SwiftUI
+#if canImport(UIKit)
+import UIKit
+#endif
 
 struct WeeklyRecapView: View {
     @EnvironmentObject var store: AppStore
     @Environment(\.appearanceMode) var appearanceMode
     @Environment(\.dismiss) private var dismiss
+    #if canImport(UIKit)
+    @State private var shareImage: UIImage?
+    @State private var showStreakShare = false
+    #endif
 
     var theme: ThemeOption { Palette.theme(for: store.state.activeThemeId) }
     
@@ -114,6 +121,24 @@ struct WeeklyRecapView: View {
                             .padding(.top, 20)
                         }
                         
+                        #if canImport(UIKit)
+                        Button {
+                            shareImage = ShareCard.renderImage(
+                                traderName: store.state.traderName,
+                                streak: store.state.currentStreak,
+                                level: store.state.levelInfo().level,
+                                rank: store.state.levelInfo().rank,
+                                theme: theme
+                            )
+                            showStreakShare = shareImage != nil
+                        } label: {
+                            Label("Share your streak", systemImage: "square.and.arrow.up.on.square")
+                                .font(.system(size: 14, weight: .semibold))
+                                .foregroundColor(theme.brass)
+                        }
+                        .padding(.top, 8)
+                        #endif
+
                         Spacer(minLength: 40)
                         
                         Button {
@@ -134,6 +159,13 @@ struct WeeklyRecapView: View {
                 }
             }
             .navigationBarHidden(true)
+            #if canImport(UIKit)
+            .sheet(isPresented: $showStreakShare) {
+                if let shareImage {
+                    ActivityShareSheet(items: [shareImage])
+                }
+            }
+            #endif
         }
     }
 }

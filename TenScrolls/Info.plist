@@ -4,5 +4,16 @@
 <dict>
 	<key>NSAlarmKitUsageDescription</key>
 	<string>Ten Scrolls uses alarms to make sure you don't miss your Dawn, Midday, or Dusk reading.</string>
+	<key>CFBundleURLTypes</key>
+	<array>
+		<dict>
+			<key>CFBundleURLName</key>
+			<string>ekme.TenScrolls.invite</string>
+			<key>CFBundleURLSchemes</key>
+			<array>
+				<string>tenscrolls</string>
+			</array>
+		</dict>
+	</array>
 </dict>
 </plist>

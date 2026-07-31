@@ -21,6 +21,16 @@ struct CaravanView: View {
     @State private var friendData: [String: FriendSnapshot] = [:]
     @State private var cheersReceived = 0
     @State private var cheerSentFor: Set<String> = []
+    @State private var cheerAckStatus: [String: CheerAckStatus] = [:]
+    #if canImport(UIKit)
+    @State private var shareImage: UIImage?
+    @State private var showStreakShare = false
+    #endif
+    @State private var showIncomingShares = false
+    @State private var groupNameDraft = ""
+    @State private var groupCodeDraft = ""
+    @State private var groupMessage: String?
+    @State private var groupMessageIsError = false
 
     var theme: ThemeOption { Palette.theme(for: store.state.activeThemeId) }
     var myStreak: Int { store.state.currentStreak }
@@ -31,6 +41,11 @@ struct CaravanView: View {
     }
     var myRankIndex: Int? {
         sortedBoard?.firstIndex(where: { $0.code == store.state.traderCode })
+    }
+    /// Deep link opened by `AppStore.handleIncomingURL` on the recipient's
+    /// device, pre-filling their add-friend field with this trader's code.
+    var inviteURL: URL {
+        URL(string: "tenscrolls://addfriend?code=\(store.state.traderCode)")!
     }
 
     var body: some View {
@@ -46,8 +61,15 @@ struct CaravanView: View {
                     .padding(.bottom, 6)
 
                 identityCard
+                if !store.pendingCheers.isEmpty {
+                    pendingCheersBanner
+                }
+                if !store.pendingScrollShares.isEmpty {
+                    incomingSharesBanner
+                }
                 addFriendCard
                 duelsSection
+                readingGroupsSection
                 leaderboardSection
 
                 Color.clear.frame(height: 10)
@@ -58,10 +80,86 @@ struct CaravanView: View {
         .background(colors.background)
         .task(id: "\(store.state.friendCodes.joined())-\(store.state.traderCode)") {
             await loadCircle()
+            await store.refreshReadingGroups()
+            await store.refreshPendingShares()
+            await store.refreshPendingCheers()
         }
         .onAppear {
             if store.state.traderName.isEmpty { editingName = true }
+            consumePendingFriendCode()
         }
+        .onChange(of: store.pendingFriendCode) { _, _ in
+            consumePendingFriendCode()
+        }
+        #if canImport(UIKit)
+        .sheet(isPresented: $showStreakShare) {
+            if let shareImage {
+                ActivityShareSheet(items: [shareImage])
+            }
+        }
+        #endif
+        .sheet(isPresented: $showIncomingShares) {
+            IncomingSharedScrollsView()
+                .environment(\.appearanceMode, appearanceMode)
+        }
+    }
+
+    /// In-app fallback for cheers whose push was missed, dismissed unseen,
+    /// or arrived while notification permission was denied. Each row lets
+    /// the recipient explicitly acknowledge — same action as the push's
+    /// "Got it" button, just reachable without leaving the app.
+    private var pendingCheersBanner: some View {
+        let colors = AdaptivePalette(mode: appearanceMode)
+        return VStack(alignment: .leading, spacing: 0) {
+            SectionLabel(text: "Encouragement")
+            CardView {
+                VStack(spacing: 10) {
+                    ForEach(store.pendingCheers) { cheer in
+                        HStack(spacing: 10) {
+                            Image(systemName: "megaphone.fill").foregroundColor(theme.brass)
+                            Text("\(cheer.from_trader_name) sent you encouragement")
+                                .font(.system(size: 13)).foregroundColor(colors.text)
+                            Spacer()
+                            Button("Got it") {
+                                store.acknowledgeCheer(id: cheer.cheer_id)
+                            }
+                            .font(.system(size: 12.5, weight: .semibold))
+                            .foregroundColor(theme.brass)
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    private var incomingSharesBanner: some View {
+        let colors = AdaptivePalette(mode: appearanceMode)
+        return Button {
+            showIncomingShares = true
+        } label: {
+            HStack(spacing: 10) {
+                Image(systemName: "tray.and.arrow.down.fill").foregroundColor(theme.brass)
+                Text("\(store.pendingScrollShares.count) scroll\(store.pendingScrollShares.count == 1 ? "" : "s") shared with you")
+                    .font(.system(size: 13, weight: .semibold)).foregroundColor(colors.text)
+                Spacer()
+                Image(systemName: "chevron.right").font(.system(size: 12)).foregroundColor(colors.textFaint)
+            }
+            .padding(14)
+            .background(theme.brass.opacity(0.12))
+            .overlay(RoundedRectangle(cornerRadius: 14).stroke(theme.brassDim, lineWidth: 1))
+            .clipShape(RoundedRectangle(cornerRadius: 14))
+        }
+        .buttonStyle(.plain)
+    }
+
+    /// Prefills and submits the add-friend field from an opened
+    /// `tenscrolls://addfriend?code=...` link, then clears the pending code
+    /// so it isn't re-applied on the next appearance.
+    private func consumePendingFriendCode() {
+        guard let code = store.pendingFriendCode else { return }
+        friendInput = code
+        submitFriend()
+        store.pendingFriendCode = nil
     }
 
     // MARK: - Identity
@@ -109,6 +207,13 @@ struct CaravanView: View {
                 Text(store.state.traderCode)
                     .font(AppFont.mono(12.5)).tracking(1.2).foregroundColor(theme.brass)
                 Spacer()
+                ShareLink(
+                    item: inviteURL,
+                    subject: Text("Join me on Ten Scrolls"),
+                    message: Text("Add me as a fellow trader in the Caravan \u{2014} my code is \(store.state.traderCode).")
+                ) {
+                    Image(systemName: "square.and.arrow.up").foregroundColor(colors.textDim)
+                }
                 Button {
                     #if canImport(UIKit)
                     UIPasteboard.general.string = store.state.traderCode
@@ -130,6 +235,29 @@ struct CaravanView: View {
             .overlay(RoundedRectangle(cornerRadius: 10).stroke(colors.inkLine, lineWidth: 1))
             .clipShape(RoundedRectangle(cornerRadius: 10))
             .padding(.top, 12)
+
+            #if canImport(UIKit)
+            Button {
+                shareImage = ShareCard.renderImage(
+                    traderName: store.state.traderName,
+                    streak: myStreak,
+                    level: myLevel,
+                    rank: store.state.levelInfo().rank,
+                    theme: theme
+                )
+                showStreakShare = shareImage != nil
+            } label: {
+                Label("Share your streak", systemImage: "square.and.arrow.up.on.square")
+                    .font(.system(size: 12.5))
+            }
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 9)
+            .background(colors.ink3)
+            .foregroundColor(theme.brass)
+            .overlay(RoundedRectangle(cornerRadius: 10).stroke(theme.brassDim, lineWidth: 1))
+            .clipShape(RoundedRectangle(cornerRadius: 10))
+            .padding(.top, 10)
+            #endif
         }
     }
 
@@ -197,10 +325,31 @@ struct CaravanView: View {
                         friend: friendData[code],
                         myStreak: myStreak,
                         theme: theme,
-                        cheerSent: cheerSentFor.contains(code),
+                        cheerSent: cheerSentFor.contains(code) || (cheerAckStatus[code]?.sent ?? false),
+                        cheerSeen: cheerAckStatus[code]?.acknowledged ?? false,
                         onRemove: { store.removeFriend(code) },
                         onCheer: { await sendCheer(code) }
                     )
+                }
+            }
+        }
+    }
+
+    // MARK: - Reading Groups
+
+    private var readingGroupsSection: some View {
+        let colors = AdaptivePalette(mode: appearanceMode)
+        return VStack(alignment: .leading, spacing: 0) {
+            SectionLabel(text: "Reading Groups")
+            CardView {
+                if store.myReadingGroups.isEmpty {
+                    EmptyState(text: "No reading groups yet. Create or join a group to read together with friends.")
+                } else {
+                    VStack(spacing: 8) {
+                        ForEach(store.myReadingGroups) { group in
+                            ReadingGroupRow(group: group, theme: theme)
+                        }
+                    }
                 }
             }
         }
@@ -254,11 +403,18 @@ struct CaravanView: View {
         friendData = map
 
         cheersReceived = await store.leaderboard.fetchCheerCount(code: store.state.traderCode)
+
+        var ackMap: [String: CheerAckStatus] = [:]
+        for code in store.state.friendCodes {
+            ackMap[code] = await store.leaderboard.fetchCheerAckStatus(code: code)
+        }
+        cheerAckStatus = ackMap
     }
 
     private func sendCheer(_ code: String) async {
         cheerSentFor.insert(code)
         await store.leaderboard.sendCheer(code: code)
+        cheerAckStatus[code] = await store.leaderboard.fetchCheerAckStatus(code: code)
     }
 }
 
@@ -269,6 +425,7 @@ private struct DuelCard: View {
     let myStreak: Int
     let theme: ThemeOption
     let cheerSent: Bool
+    let cheerSeen: Bool
     let onRemove: () -> Void
     let onCheer: () async -> Void
 
@@ -321,17 +478,20 @@ private struct DuelCard: View {
             Button {
                 Task { await onCheer() }
             } label: {
-                Label(cheerSent ? "Encouragement sent" : "Send encouragement", systemImage: "megaphone.fill")
-                    .font(.system(size: 12.5))
+                Label(
+                    cheerSeen ? "Seen" : (cheerSent ? "Encouragement sent" : "Send encouragement"),
+                    systemImage: cheerSeen ? "checkmark.circle.fill" : "megaphone.fill"
+                )
+                .font(.system(size: 12.5))
             }
             .disabled(friend == nil || cheerSent)
             .frame(maxWidth: .infinity)
             .padding(.vertical, 9)
             .background(colors.ink3)
-            .foregroundColor(theme.brass)
+            .foregroundColor(cheerSeen ? colors.green : theme.brass)
             .overlay(RoundedRectangle(cornerRadius: 10).stroke(theme.brassDim, lineWidth: 1))
             .clipShape(RoundedRectangle(cornerRadius: 10))
-            .opacity(friend == nil || cheerSent ? 0.55 : 1)
+            .opacity(friend == nil || cheerSent ? (cheerSeen ? 1 : 0.55) : 1)
             .padding(.top, 12)
         }
     }
@@ -386,6 +546,31 @@ private struct LeaderRow: View {
         .padding(.horizontal, isSelf ? 18 : 0)
         .background(isSelf ? theme.brass.opacity(0.09) : Color.clear)
         .clipShape(RoundedRectangle(cornerRadius: isSelf ? 10 : 0))
+    }
+}
+
+private struct ReadingGroupRow: View {
+    @Environment(\.appearanceMode) var appearanceMode
+    let group: ReadingGroupSummary
+    let theme: ThemeOption
+
+    var body: some View {
+        let colors = AdaptivePalette(mode: appearanceMode)
+        HStack {
+            VStack(alignment: .leading, spacing: 3) {
+                Text(group.name)
+                    .font(AppFont.display(15))
+                    .foregroundColor(colors.text)
+                Text("\(group.member_count) member\(group.member_count == 1 ? "" : "s")")
+                    .font(AppFont.mono(11))
+                    .foregroundColor(colors.textFaint)
+            }
+            Spacer()
+            Image(systemName: "chevron.right")
+                .font(.system(size: 12))
+                .foregroundColor(colors.textFaint)
+        }
+        .padding(.vertical, 8)
     }
 }
 

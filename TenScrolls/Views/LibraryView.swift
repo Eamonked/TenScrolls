@@ -1,4 +1,7 @@
 import SwiftUI
+#if canImport(UIKit)
+import UIKit
+#endif
 
 /// The library shelf: full-length books imported outside the ten scrolls,
 /// for reading alongside the daily practice rather than as part of it.
@@ -10,6 +13,10 @@ struct LibraryView: View {
     @Environment(\.appearanceMode) var appearanceMode
     @State private var showImport = false
     @State private var pendingDelete: LibraryIndexEntry?
+    #if canImport(UIKit)
+    @State private var shareImage: UIImage?
+    @State private var showShare = false
+    #endif
 
     var theme: ThemeOption { Palette.theme(for: store.state.activeThemeId) }
 
@@ -41,6 +48,13 @@ struct LibraryView: View {
                             }
                             .buttonStyle(.plain)
                             .contextMenu {
+                                #if canImport(UIKit)
+                                Button {
+                                    shareBook(entry)
+                                } label: {
+                                    Label("Share what I'm reading", systemImage: "square.and.arrow.up")
+                                }
+                                #endif
                                 Button(role: .destructive) {
                                     pendingDelete = entry
                                 } label: {
@@ -69,6 +83,13 @@ struct LibraryView: View {
         .sheet(isPresented: $showImport) {
             DocumentImportSheet(defaultDestination: .library)
         }
+        #if canImport(UIKit)
+        .sheet(isPresented: $showShare) {
+            if let shareImage {
+                ActivityShareSheet(items: [shareImage])
+            }
+        }
+        #endif
         .confirmationDialog(
             pendingDelete.map { "Remove “\($0.title)”?" } ?? "",
             isPresented: Binding(
@@ -86,6 +107,20 @@ struct LibraryView: View {
             Text("This can't be undone — the book's text will be deleted from this device.")
         }
     }
+
+    #if canImport(UIKit)
+    private func shareBook(_ entry: LibraryIndexEntry) {
+        let started = entry.bookmarkChapterIndex > 0 || (entry.bookmarkScrollFraction ?? 0) > 0
+        let subject = ReadingShareSubject.book(
+            title: entry.title,
+            author: entry.author ?? "",
+            chapter: started ? entry.bookmarkChapterIndex + 1 : 0,
+            chapterCount: entry.chapterCount
+        )
+        shareImage = NowReadingCard.renderImage(subject: subject, traderName: store.state.traderName, theme: theme)
+        showShare = shareImage != nil
+    }
+    #endif
 
     private func emptyState(_ colors: AdaptivePalette) -> some View {
         VStack(spacing: 10) {

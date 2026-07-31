@@ -500,6 +500,58 @@ struct LeaderboardEntry: Identifiable, Equatable, Sendable {
     var snapshot: FriendSnapshot
 }
 
+/// A scroll shared to this device (directly or via a reading group) that
+/// hasn't been imported or dismissed yet. Decoded from the
+/// `fetch_pending_shares` RPC response.
+struct PendingScrollShare: Identifiable, Decodable, Equatable {
+    let id: UUID
+    let scroll_number: Int
+    let title: String
+    let notes: String
+    let from_trader_code: String
+    let from_trader_name: String
+    let shared_at: Date
+}
+
+/// A cheer sent to this user that hasn't been acknowledged yet. Decoded from
+/// the `fetch_unacknowledged_cheers` RPC response — the in-app fallback
+/// surface for when a push notification was missed or not tapped.
+struct PendingCheer: Identifiable, Decodable, Equatable {
+    var id: UUID { cheer_id }
+    let cheer_id: UUID
+    let from_trader_code: String
+    let from_trader_name: String
+    let created_at: Date
+}
+
+/// Whether the last cheer *I* sent to a given trader code has been seen.
+/// Decoded from the `fetch_cheer_ack_status` RPC response.
+struct CheerAckStatus: Decodable, Equatable {
+    let sent: Bool
+    let acknowledged: Bool?
+    let sent_at: Date?
+    let acknowledged_at: Date?
+}
+
+/// Lightweight summary of a reading group for the Caravan tab's group list
+/// and the share-recipient picker. Decoded from the `fetch_my_reading_groups`
+/// RPC response.
+struct ReadingGroupSummary: Identifiable, Decodable, Equatable {
+    var id: UUID { group_id }
+    let group_id: UUID
+    let name: String
+    let group_code: String
+    let member_count: Int
+}
+
+/// Result of a create-group or join-group operation, returned by
+/// `SupabaseSharing.createGroup` / `joinGroup`.
+enum GroupOperationResult {
+    case created(id: UUID, code: String, name: String)
+    case joined(id: UUID, name: String)
+    case failure(String)
+}
+
 enum Constants {
     static let romans = ["I", "II", "III", "IV", "V", "VI", "VII", "VIII", "IX", "X"]
     static let ranks = [

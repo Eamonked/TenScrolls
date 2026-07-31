@@ -16,5 +16,13 @@ enum SupabaseConfig {
     /// SECURITY DEFINER RPCs on the Postgres side, not this key.
     static let publishableKey = "sb_publishable_GtijMsXiS-nXTMFaBAv6dw_g31V4A0W"
 
-    static let client = SupabaseClient(supabaseURL: projectURL, supabaseKey: publishableKey)
+    static let client: SupabaseClient = {
+        return SupabaseClient(
+            supabaseURL: projectURL,
+            supabaseKey: publishableKey,
+            options: .init(
+                auth: .init(emitLocalSessionAsInitialSession: true)
+            )
+        )
+    }()
 }

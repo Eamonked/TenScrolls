@@ -16,25 +16,15 @@ import Supabase
 /// plan. Cheers are already fully server-enforced (one per sender/recipient/
 /// day, via the `send_cheer` RPC), since those don't depend on session data.
 actor SupabaseLeaderboard {
-    private var signInTask: Task<Void, Error>?
-
     init() {}
 
     // MARK: - Auth
 
-    /// Ensures we have an anonymous Supabase session. Safe to call repeatedly —
-    /// concurrent callers await the same in-flight sign-in instead of racing.
+    /// Ensures we have an anonymous Supabase session. Delegates to the shared
+    /// `SupabaseAuth` actor so this and `SupabaseSharing` never race each
+    /// other into minting two separate anonymous sessions.
     private func ensureSignedIn() async throws {
-        if let task = signInTask {
-            return try await task.value
-        }
-        let task = Task {
-            if SupabaseConfig.client.auth.currentSession == nil {
-                _ = try await SupabaseConfig.client.auth.signInAnonymously()
-            }
-        }
-        signInTask = task
-        try await task.value
+        try await SupabaseAuth.shared.ensureSignedIn()
     }
 
     // MARK: - Identity claim (with collision retry)
@@ -205,6 +195,68 @@ actor SupabaseLeaderboard {
             return count
         } catch {
             return 0
+        }
+    }
+
+    // MARK: - Push notifications for cheers
+
+    /// Uploads (or refreshes) this device's APNs token so cheers sent to this
+    /// user can be delivered as a real push, not just an in-app poll.
+    func registerPushToken(_ token: String, environment: String) async {
+        do {
+            try await ensureSignedIn()
+            try await SupabaseConfig.client
+                .rpc("register_push_token", params: ["p_token": token, "p_environment": environment])
+                .execute()
+        } catch {
+            // Best-effort — in-app polling still covers delivery.
+        }
+    }
+
+    /// Marks a cheer as received. Called either from the "Got it" notification
+    /// action, or from the in-app fallback banner if the push was missed.
+    @discardableResult
+    func acknowledgeCheer(id: UUID) async -> Bool {
+        do {
+            try await ensureSignedIn()
+            struct Ack: Decodable { let success: Bool; let updated: Bool? }
+            let response: Ack = try await SupabaseConfig.client
+                .rpc("acknowledge_cheer", params: ["p_cheer_id": id.uuidString])
+                .execute()
+                .value
+            return response.success
+        } catch {
+            return false
+        }
+    }
+
+    /// Cheers sent to this user that haven't been acknowledged yet — the
+    /// in-app fallback surface for when a push was missed or not tapped.
+    func fetchUnacknowledgedCheers() async -> [PendingCheer] {
+        do {
+            try await ensureSignedIn()
+            let rows: [PendingCheer] = try await SupabaseConfig.client
+                .rpc("fetch_unacknowledged_cheers")
+                .execute()
+                .value
+            return rows
+        } catch {
+            return []
+        }
+    }
+
+    /// Whether the last cheer *I* sent to `code` has been seen — drives a
+    /// "seen" checkmark on the sender's side of the duel card.
+    func fetchCheerAckStatus(code: String) async -> CheerAckStatus {
+        do {
+            try await ensureSignedIn()
+            let status: CheerAckStatus = try await SupabaseConfig.client
+                .rpc("fetch_cheer_ack_status", params: ["p_to_code": code])
+                .execute()
+                .value
+            return status
+        } catch {
+            return CheerAckStatus(sent: false, acknowledged: nil, sent_at: nil, acknowledged_at: nil)
         }
     }
 }
