@@ -24,6 +24,13 @@ struct TenScrollsApp: App {
     @StateObject private var store = AppStore()
     @UIApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
 
+    init() {
+        // Surfaces a missing/mismatched App Group entitlement in the console
+        // at launch, rather than as a silently-empty widget later — see
+        // `WidgetStorage.logStartupDiagnostics`.
+        WidgetStorage.logStartupDiagnostics(caller: "app")
+    }
+
     var body: some Scene {
         WindowGroup {
             ContentView()

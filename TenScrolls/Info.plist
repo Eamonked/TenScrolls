@@ -2,6 +2,8 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
+	<key>AppGroupIdentifier</key>
+	<string>$(APP_GROUP_IDENTIFIER)</string>
 	<key>NSAlarmKitUsageDescription</key>
 	<string>Ten Scrolls uses alarms to make sure you don't miss your Dawn, Midday, or Dusk reading.</string>
 	<key>CFBundleURLTypes</key>

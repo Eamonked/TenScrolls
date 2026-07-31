@@ -110,13 +110,26 @@ struct LibraryView: View {
 
     #if canImport(UIKit)
     private func shareBook(_ entry: LibraryIndexEntry) {
-        let started = entry.bookmarkChapterIndex > 0 || (entry.bookmarkScrollFraction ?? 0) > 0
-        let subject = ReadingShareSubject.book(
-            title: entry.title,
-            author: entry.author ?? "",
-            chapter: started ? entry.bookmarkChapterIndex + 1 : 0,
-            chapterCount: entry.chapterCount
-        )
+        let subject: ReadingShareSubject
+        switch entry.sourceType {
+        case .pdf:
+            subject = .book(
+                title: entry.title,
+                author: entry.author ?? "",
+                chapter: entry.bookmarkPDFPageIndex > 0 ? entry.bookmarkPDFPageIndex + 1 : 0,
+                chapterCount: entry.chapterCount,
+                unit: .page
+            )
+        case .epub:
+            let started = entry.bookmarkChapterIndex > 0 || (entry.bookmarkScrollFraction ?? 0) > 0
+            subject = .book(
+                title: entry.title,
+                author: entry.author ?? "",
+                chapter: started ? entry.bookmarkChapterIndex + 1 : 0,
+                chapterCount: entry.chapterCount,
+                unit: .chapter
+            )
+        }
         shareImage = NowReadingCard.renderImage(subject: subject, traderName: store.state.traderName, theme: theme)
         showShare = shareImage != nil
     }
@@ -150,9 +163,21 @@ private struct BookRow: View {
 
     private var progressLabel: String {
         guard entry.chapterCount > 0 else { return "Not started" }
-        let chapter = min(entry.bookmarkChapterIndex + 1, entry.chapterCount)
-        let started = entry.bookmarkChapterIndex > 0 || (entry.bookmarkScrollFraction ?? 0) > 0
-        return started ? "Chapter \(chapter) of \(entry.chapterCount)" : "Not started"
+        switch entry.sourceType {
+        case .pdf:
+            // PDFs track reading position as a page index (see
+            // `LibraryIndexEntry.bookmarkPDFPageIndex`), not the chapter +
+            // scroll-fraction pair EPUBs use — `chapterCount` here still
+            // holds the page count from import (one chunk per PDF page, see
+            // `PDFImporter.extractPages`), so it doubles as the total for
+            // this label.
+            let page = min(entry.bookmarkPDFPageIndex + 1, entry.chapterCount)
+            return entry.bookmarkPDFPageIndex > 0 ? "Page \(page) of \(entry.chapterCount)" : "Not started"
+        case .epub:
+            let chapter = min(entry.bookmarkChapterIndex + 1, entry.chapterCount)
+            let started = entry.bookmarkChapterIndex > 0 || (entry.bookmarkScrollFraction ?? 0) > 0
+            return started ? "Chapter \(chapter) of \(entry.chapterCount)" : "Not started"
+        }
     }
 
     var body: some View {

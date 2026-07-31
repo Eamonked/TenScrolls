@@ -71,13 +71,17 @@ final class AppStore: ObservableObject {
         } else {
             loadedState = AppState.defaultState()
         }
-        self.state = loadedState
+        // Defensive no-op in the common case (defaultState() above already
+        // seeded habits for a brand-new install) — see seedDefaultHabitsIfEmpty().
+        var seededState = loadedState
+        seededState.seedDefaultHabitsIfEmpty()
+        self.state = seededState
 
-        let info = loadedState.levelInfo()
+        let info = seededState.levelInfo()
         self.prevLevel = info.level
-        self.prevMasteredIds = loadedState.scrolls.filter { $0.status == .mastered }.map { $0.id }
-        self.prevEarnedIds = loadedState.achievements.filter { $0.earned }.map { $0.def.id }
-        self.prevBestStreak = loadedState.bestStreak
+        self.prevMasteredIds = seededState.scrolls.filter { $0.status == .mastered }.map { $0.id }
+        self.prevEarnedIds = seededState.achievements.filter { $0.earned }.map { $0.def.id }
+        self.prevBestStreak = seededState.bestStreak
         publishSnapshotIfNeeded()
 
         notifier.registerDelegate()
@@ -594,9 +598,21 @@ final class AppStore: ObservableObject {
     /// original markup (see `EPUBParser`) so the Library reader can render
     /// tables/lists/images faithfully instead of the flattened plain-text
     /// fallback. `nil` for PDF imports.
-    func addBookToLibrary(filename: String, chunks: [String], titles: [String?], html: [String]? = nil, bookTitle: String? = nil) throws {
-        let (book, index) = Book.from(filename: filename, chunks: chunks, titles: titles, html: html, bookTitle: bookTitle)
+    ///
+    /// `pdfData`, when present, is the PDF's original, unmodified bytes —
+    /// this is what makes the book a `.pdf`-sourced book. It's written to
+    /// its own file via `LibraryStore.savePDF` and opened directly by the
+    /// native `PDFReaderView`; `chunks`/`titles` are still extracted and
+    /// stored as before (see `Documentimportsheet`), but only as a fallback
+    /// text layer — the actual reading experience never flattens the PDF
+    /// the way the old text-reflow pipeline did.
+    func addBookToLibrary(filename: String, chunks: [String], titles: [String?], html: [String]? = nil, bookTitle: String? = nil, pdfData: Data? = nil) throws {
+        let sourceType: BookSource = pdfData != nil ? .pdf : .epub
+        let (book, index) = Book.from(filename: filename, chunks: chunks, titles: titles, html: html, bookTitle: bookTitle, sourceType: sourceType)
         try LibraryStore.save(book)
+        if let pdfData {
+            try LibraryStore.savePDF(pdfData, for: book.id)
+        }
         state.libraryBooks.append(index)
         afterMutation()
     }
@@ -620,6 +636,17 @@ final class AppStore: ObservableObject {
         guard let idx = state.libraryBooks.firstIndex(where: { $0.id == bookId }) else { return }
         state.libraryBooks[idx].bookmarkChapterIndex = chapterIndex
         state.libraryBooks[idx].bookmarkScrollFraction = scrollFraction
+        afterMutation()
+    }
+
+    /// Mirrors `setLibraryBookmark(bookId:chapterIndex:scrollFraction:)` for
+    /// `.pdf` books, whose reading position is a plain PDFKit page index
+    /// rather than a chapter + fraction — see
+    /// `LibraryIndexEntry.bookmarkPDFPageIndex`.
+    func setLibraryPDFBookmark(bookId: UUID, pageIndex: Int) {
+        guard let idx = state.libraryBooks.firstIndex(where: { $0.id == bookId }),
+              state.libraryBooks[idx].bookmarkPDFPageIndex != pageIndex else { return }
+        state.libraryBooks[idx].bookmarkPDFPageIndex = pageIndex
         afterMutation()
     }
 

@@ -116,14 +116,29 @@ struct ActivityShareSheet: UIViewControllerRepresentable {
 enum ReadingShareSubject {
     /// A scroll from the ten-scroll practice.
     case scroll(roman: String, title: String, day: Int, totalDays: Int)
-    /// A library book imported outside the scrolls.
-    case book(title: String, author: String, chapter: Int, chapterCount: Int)
+    /// A library book imported outside the scrolls. `unit` picks the label
+    /// for `chapter`/`chapterCount` — `.chapter` for an `.epub` book,
+    /// `.page` for a `.pdf` book, whose reading position is a page index
+    /// rather than a chapter (see `LibraryIndexEntry.bookmarkPDFPageIndex`).
+    case book(title: String, author: String, chapter: Int, chapterCount: Int, unit: BookProgressUnit = .chapter)
+
+    enum BookProgressUnit {
+        case chapter
+        case page
+
+        var abbreviation: String {
+            switch self {
+            case .chapter: return "Ch."
+            case .page: return "p."
+            }
+        }
+    }
 
     var headline: String {
         switch self {
         case .scroll(let roman, let title, _, _):
             return title.isEmpty ? "Scroll \(roman)" : title
-        case .book(let title, _, _, _):
+        case .book(let title, _, _, _, _):
             return title
         }
     }
@@ -132,9 +147,9 @@ enum ReadingShareSubject {
         switch self {
         case .scroll(let roman, _, let day, let totalDays):
             return "Scroll \(roman) · Day \(day) of \(totalDays)"
-        case .book(_, let author, let chapter, let chapterCount):
+        case .book(_, let author, let chapter, let chapterCount, let unit):
             if chapter > 0 {
-                return "\(author) · Ch. \(chapter) of \(chapterCount)"
+                return "\(author) · \(unit.abbreviation) \(chapter) of \(chapterCount)"
             }
             return author
         }

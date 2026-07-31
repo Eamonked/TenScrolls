@@ -1,5 +1,27 @@
 # Widget Build Errors - Fixed! ✅
 
+## App Group identifier is now config-driven
+
+The App Group identifier is no longer hard-coded as a string literal in Swift.
+It's defined once, as the `APP_GROUP_IDENTIFIER` build setting on the project
+(see `TenScrolls.xcodeproj/project.pbxproj`, project-level Debug/Release
+configs — both targets inherit it), and substituted into each target's
+`Info.plist` as the `AppGroupIdentifier` key. `WidgetStorage` (in
+`TenScrolls/WidgetData.swift` and `TenScrollsWidget/WidgetDataShared.swift`)
+reads it from there at runtime, so the app and widget extension can no longer
+silently drift onto two different literals. Both files still print a
+startup diagnostic (`WidgetStorage.logStartupDiagnostics`) if the App Group
+can't be resolved — check the Xcode/device console first if widgets aren't
+syncing; it'll usually tell you exactly what's misconfigured.
+
+Storage itself also changed: `WidgetData.save`/`.load` and
+`JournalWidgetData.save`/`.load` now prefer writing/reading a JSON file
+inside the App Group's shared container, falling back to the App Group's
+suite `UserDefaults` only if the container is unavailable. The App Groups
+capability + entitlement still needs to be configured exactly as described
+below — this only changed *where in the container* the data lives, not
+whether the capability is required.
+
 ## Problem
 The widget extension couldn't find `WidgetData` and `JournalWidgetData` types because they were in the main app target but not in the widget extension target.
 
@@ -94,20 +116,19 @@ TenScrollsWidgetExtension builds successfully
 
 ## If Widgets Still Don't Show Data
 
-### Check App Groups in Code
-Verify both places use the same suite name:
+### Check the App Group identifier
+Both targets now read the identifier from the same build setting rather than
+a hand-typed literal, so they can't drift apart — but double check it's set:
 
-**In WidgetDataShared.swift:**
-```swift
-static let sharedDefaults = UserDefaults(suiteName: "group.ekme.TenScrolls")
+**In `project.pbxproj`** (project-level Debug/Release build settings):
+```
+APP_GROUP_IDENTIFIER = group.ekme.TenScrolls;
 ```
 
-**In TenScrolls/WidgetData.swift:**
-```swift
-static let sharedDefaults = UserDefaults(suiteName: "group.ekme.TenScrolls")
-```
-
-They must match exactly!
+If you need to change the identifier, change it there — both `Info.plist`
+files substitute it in automatically via `$(APP_GROUP_IDENTIFIER)`, and both
+`WidgetStorage` copies (in `WidgetData.swift` / `WidgetDataShared.swift`)
+read it from `Info.plist` at runtime. No Swift file needs editing.
 
 ### Force Widget Refresh
 After adding journal entries in the app:

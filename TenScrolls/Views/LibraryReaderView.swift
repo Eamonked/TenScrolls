@@ -1,23 +1,47 @@
 import SwiftUI
 
-/// Reads one book from the shelf. The book's full text is loaded from disk
-/// only when this view appears, and released again once it's dismissed —
-/// `AppState`/`AppStore` never hold it.
+/// Reads one book from the shelf. This view is just a router: it looks up
+/// the book's `LibraryIndexEntry.sourceType` and hands off entirely to one
+/// of two independent reading engines, per the Phase 1 architecture split
+/// (isolated PDF pipeline, EPUB pipeline untouched):
 ///
-/// Reading goes through `BookChapterWebView` (CSS-column pagination inside a
-/// `WKWebView`) for every book — EPUB chapters render their real HTML;
-/// chapters with no native markup (PDF imports) fall back to plain
-/// `<p>`-wrapped paragraphs via `chapterHTML(for:)`, so the reading engine
-/// never has to branch on where a book came from. One chapter is loaded at
-/// a time; swiping past its last/first page lands on the next/previous
-/// chapter's first/last page via `onRequestNextChapter`/`onRequestPreviousChapter`.
+/// - `.epub` — `LibraryReaderBody` below, unchanged: `BookChapterWebView`
+///   (CSS-column pagination inside a `WKWebView`), loading the book's full
+///   text from disk (`LibraryStore.load`) only while this view is on
+///   screen, and releasing it again once dismissed.
+/// - `.pdf` — `PDFReaderView` (`PDFReaderView.swift`), native PDFKit
+///   rendering of the original file (`LibraryStore.pdfURL`), never routed
+///   through `BookChapterWebView`/text reflow at all.
 ///
-/// Chrome (nav bar title, "Aa" size control, table of contents, bottom
-/// progress bar) is modeled on Apple Books: a small chapter-name title while
-/// reading, one shared text-size control, a proper contents list instead of
-/// a bare menu, and a thin progress track + "Chapter N of M · Page X of Y"
-/// readout pinned to the bottom.
+/// The two engines share nothing at render time — no common "reading view"
+/// protocol, no fallback from one into the other — by design: a PDF that
+/// used to get flattened into `<p>` tags for the WebView pipeline now never
+/// touches that pipeline in the first place.
 struct LibraryReaderView: View {
+    let bookId: UUID
+    let fallbackTitle: String
+
+    @EnvironmentObject private var store: AppStore
+
+    private var indexEntry: LibraryIndexEntry? {
+        store.state.libraryBooks.first { $0.id == bookId }
+    }
+
+    var body: some View {
+        switch indexEntry?.sourceType ?? .epub {
+        case .pdf:
+            PDFReaderView(bookId: bookId, fallbackTitle: fallbackTitle)
+        case .epub:
+            LibraryReaderBody(bookId: bookId, fallbackTitle: fallbackTitle)
+        }
+    }
+}
+
+/// The original EPUB reading screen, renamed from `LibraryReaderView` but
+/// otherwise untouched — `WKWebView`/CSS-column pagination, chapter-by-
+/// chapter loading, Apple-Books-style chrome. See `LibraryReaderView` above
+/// for the routing that now sits in front of this.
+struct LibraryReaderBody: View {
     @EnvironmentObject var store: AppStore
     @Environment(\.appearanceMode) var appearanceMode
     let bookId: UUID

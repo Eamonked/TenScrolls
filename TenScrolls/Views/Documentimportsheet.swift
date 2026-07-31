@@ -24,6 +24,14 @@ struct DocumentImportSheet: View {
         /// Sanitized per-chapter HTML, EPUB imports only — same order/count
         /// as `chunks`. `nil` for PDFs, which have no native markup to keep.
         let html: [String]?
+        /// The PDF's original, unmodified bytes — nil for EPUB imports. Only
+        /// `.library` (see `apply(_:)`) ever needs this: it's what lets the
+        /// Library shelve the book as `.pdf`-sourced and hand it to the
+        /// native PDFKit reader, rather than only ever having the flattened
+        /// `chunks` text `PDFImporter` extracted for the other two
+        /// destinations (which are just plain-text scroll notes and have no
+        /// reader of their own to be native about).
+        let pdfData: Data?
     }
 
     private enum Stage {
@@ -249,6 +257,7 @@ struct DocumentImportSheet: View {
                 let titles: [String?]
                 var html: [String]? = nil
                 var bookTitle: String? = nil
+                var pdfData: Data? = nil
                 if ext == "epub" {
                     let parsed = try EPUBParser.extractChapters(from: url)
                     bookTitle = parsed.bookTitle
@@ -258,8 +267,9 @@ struct DocumentImportSheet: View {
                 } else {
                     chunks = try PDFImporter.extractPages(from: url)
                     titles = Array(repeating: nil, count: chunks.count)
+                    pdfData = try Data(contentsOf: url)
                 }
-                let doc = ParsedDocument(filename: url.lastPathComponent, bookTitle: bookTitle, chunks: chunks, titles: titles, html: html)
+                let doc = ParsedDocument(filename: url.lastPathComponent, bookTitle: bookTitle, chunks: chunks, titles: titles, html: html, pdfData: pdfData)
                 await MainActor.run { stage = .configure(doc) }
             } catch {
                 let message = (error as? LocalizedError)?.errorDescription ?? "This file couldn't be read."
@@ -286,7 +296,7 @@ struct DocumentImportSheet: View {
             dismiss()
         case .library:
             do {
-                try store.addBookToLibrary(filename: doc.filename, chunks: doc.chunks, titles: doc.titles, html: doc.html, bookTitle: doc.bookTitle)
+                try store.addBookToLibrary(filename: doc.filename, chunks: doc.chunks, titles: doc.titles, html: doc.html, bookTitle: doc.bookTitle, pdfData: doc.pdfData)
                 dismiss()
             } catch {
                 importError = (error as? LocalizedError)?.errorDescription ?? "Something went wrong saving this book."

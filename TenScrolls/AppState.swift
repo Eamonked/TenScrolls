@@ -67,16 +67,57 @@ struct AppState: Codable, Equatable, Sendable {
         let scrolls = Constants.romans.enumerated().map { (i, r) in
             Scroll(id: i + 1, roman: r, status: i == 0 ? .active : .locked)
         }
-        let habits = [
-            Habit(id: "h1", name: "Greeted someone with genuine warmth"),
-            Habit(id: "h2", name: "Took one small action despite fear"),
-        ]
-        return AppState(scrolls: scrolls, habits: habits, traderCode: AppState.generateTraderCode())
+        return AppState(scrolls: scrolls, habits: AppState.loadDefaultHabits(), traderCode: AppState.generateTraderCode())
     }
 
     static func generateTraderCode() -> String {
         let chars = Array("ABCDEFGHJKLMNPQRSTUVWXYZ23456789")
         return String((0..<6).compactMap { _ in chars.randomElement() })
+    }
+
+    // MARK: - Default habits (data-driven)
+
+    /// The shape of an entry in `Resources/default_habits.json` — deliberately
+    /// smaller than `Habit` (no `completedDates`) since the starter habits are
+    /// always freshly minted with no history. Decoded separately from `Habit`
+    /// itself so this stays robust to `Habit`'s own Codable shape changing.
+    private struct DefaultHabitSeed: Decodable {
+        var id: String
+        var name: String
+    }
+
+    /// Starter habits for a brand-new install, loaded from
+    /// `Resources/default_habits.json` so the copy can be edited (or
+    /// localized) without a code change. Falls back to the same two habits
+    /// that used to be hard-coded here if the resource is missing or fails
+    /// to parse, so a bad/missing bundle resource can never leave a new
+    /// install with zero starter habits.
+    static func loadDefaultHabits() -> [Habit] {
+        let fallback = [
+            Habit(id: "h1", name: "Greeted someone with genuine warmth"),
+            Habit(id: "h2", name: "Took one small action despite fear"),
+        ]
+        guard let url = Bundle.main.url(forResource: "default_habits", withExtension: "json"),
+              let data = try? Data(contentsOf: url) else {
+            return fallback
+        }
+        guard let seeds = try? JSONDecoder().decode([DefaultHabitSeed].self, from: data), !seeds.isEmpty else {
+            return fallback
+        }
+        return seeds.map { Habit(id: $0.id, name: $0.name) }
+    }
+
+    /// Defensive migration: seeds `habits` from the bundled defaults if it's
+    /// empty, otherwise leaves it untouched. `defaultState()` already seeds a
+    /// brand-new install, so in the common case this is a no-op — it exists
+    /// as a safety net for any future path that could construct/decode an
+    /// `AppState` with no habits (e.g. an older or hand-edited saved state)
+    /// without ever routing through `defaultState()`. Never overwrites a
+    /// reader's own habits, including if they've deliberately deleted all of
+    /// them — "empty" here can only mean "never populated."
+    mutating func seedDefaultHabitsIfEmpty() {
+        guard habits.isEmpty else { return }
+        habits = AppState.loadDefaultHabits()
     }
 }
 

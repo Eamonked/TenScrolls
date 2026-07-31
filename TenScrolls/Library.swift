@@ -16,14 +16,67 @@ struct LibraryIndexEntry: Identifiable, Codable, Equatable {
     var totalParagraphCount: Int
     /// Which chapter the reader last stopped at. Kept here (not in the
     /// `Book` file) so bookmarking while reading never requires rewriting
-    /// the book's full text back to disk.
+    /// the book's full text back to disk. Unused for `.pdf` books — see
+    /// `bookmarkPDFPageIndex`.
     var bookmarkChapterIndex: Int = 0
     /// Reading position within `bookmarkChapterIndex`, as a 0...1 fraction
     /// of the chapter's page count rather than a paragraph index — the
     /// position a CSS-column-paginated page count is derived from can shift
     /// with font size or rotation, so a fraction survives that the way an
-    /// index wouldn't. `nil` for a book that hasn't been opened yet.
+    /// index wouldn't. `nil` for a book that hasn't been opened yet. Unused
+    /// for `.pdf` books.
     var bookmarkScrollFraction: Double? = nil
+    /// Which reading engine owns this book — `.epub` renders through the
+    /// shared WKWebView/CSS-column reflow pipeline (`BookChapterWebView`,
+    /// driven by `LibraryReaderView`); `.pdf` renders natively via PDFKit
+    /// (`PDFReaderView`), preserving the original file's own layout instead
+    /// of flattening it to text. Defaults to `.epub` on decode so every
+    /// book saved before this field existed — all of them were EPUB-style
+    /// text reflow at the time, PDFs included — keeps opening the same way
+    /// it always has.
+    var sourceType: BookSource = .epub
+    /// The page the reader last stopped at, for `.pdf` books only. A plain
+    /// page index rather than a fraction: unlike a CSS-column "page" (which
+    /// is recomputed on every font-size/rotation change), a PDFKit page is
+    /// a stable, file-native unit that never moves. Unused for `.epub` books.
+    var bookmarkPDFPageIndex: Int = 0
+
+    init(id: UUID, title: String, author: String?, addedAt: Date, chapterCount: Int, totalParagraphCount: Int, bookmarkChapterIndex: Int = 0, bookmarkScrollFraction: Double? = nil, sourceType: BookSource = .epub, bookmarkPDFPageIndex: Int = 0) {
+        self.id = id
+        self.title = title
+        self.author = author
+        self.addedAt = addedAt
+        self.chapterCount = chapterCount
+        self.totalParagraphCount = totalParagraphCount
+        self.bookmarkChapterIndex = bookmarkChapterIndex
+        self.bookmarkScrollFraction = bookmarkScrollFraction
+        self.sourceType = sourceType
+        self.bookmarkPDFPageIndex = bookmarkPDFPageIndex
+    }
+
+    // Custom decoding so index entries saved before `sourceType`/
+    // `bookmarkPDFPageIndex` existed still decode — a missing key becomes
+    // `.epub`/`0` (the pre-existing behavior) instead of throwing and
+    // knocking a previously-added book off the shelf.
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decode(UUID.self, forKey: .id)
+        title = try container.decode(String.self, forKey: .title)
+        author = try container.decodeIfPresent(String.self, forKey: .author)
+        addedAt = try container.decode(Date.self, forKey: .addedAt)
+        chapterCount = try container.decode(Int.self, forKey: .chapterCount)
+        totalParagraphCount = try container.decode(Int.self, forKey: .totalParagraphCount)
+        bookmarkChapterIndex = try container.decodeIfPresent(Int.self, forKey: .bookmarkChapterIndex) ?? 0
+        bookmarkScrollFraction = try container.decodeIfPresent(Double.self, forKey: .bookmarkScrollFraction)
+        sourceType = try container.decodeIfPresent(BookSource.self, forKey: .sourceType) ?? .epub
+        bookmarkPDFPageIndex = try container.decodeIfPresent(Int.self, forKey: .bookmarkPDFPageIndex) ?? 0
+    }
+}
+
+/// Which reading engine a Library book uses. See `LibraryIndexEntry.sourceType`.
+enum BookSource: String, Codable {
+    case epub
+    case pdf
 }
 
 /// A single chapter's worth of reading — its own natural chunk (an EPUB
@@ -73,6 +126,30 @@ struct Book: Identifiable, Codable, Equatable {
     var title: String
     var author: String?
     var chapters: [BookChapter]
+    /// Mirrors `LibraryIndexEntry.sourceType`. Kept on `Book` too (not just
+    /// the index entry) so anything that loads a `Book` straight from
+    /// `LibraryStore` — without going through `AppState.libraryBooks` —
+    /// still knows which engine it came from.
+    var sourceType: BookSource = .epub
+
+    init(id: UUID, title: String, author: String?, chapters: [BookChapter], sourceType: BookSource = .epub) {
+        self.id = id
+        self.title = title
+        self.author = author
+        self.chapters = chapters
+        self.sourceType = sourceType
+    }
+
+    // Custom decoding so books saved before `sourceType` existed still
+    // decode as `.epub` — the only thing they could have been at the time.
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decode(UUID.self, forKey: .id)
+        title = try container.decode(String.self, forKey: .title)
+        author = try container.decodeIfPresent(String.self, forKey: .author)
+        chapters = try container.decode([BookChapter].self, forKey: .chapters)
+        sourceType = try container.decodeIfPresent(BookSource.self, forKey: .sourceType) ?? .epub
+    }
 }
 
 // MARK: - Disk-backed store
@@ -107,6 +184,30 @@ enum LibraryStore {
         directory.appendingPathComponent("\(id.uuidString).json")
     }
 
+    private static func pdfFileURL(for id: UUID) -> URL {
+        directory.appendingPathComponent("\(id.uuidString).pdf")
+    }
+
+    /// Copies a PDF's original bytes into the Library's own storage —
+    /// called once, at import time (see `AppStore.addBookToLibrary`) — so
+    /// the native PDFKit reader always has a stable, sandboxed file to open,
+    /// independent of wherever the user originally picked it from (a
+    /// security-scoped bookmark to an iCloud Drive / Files location isn't
+    /// guaranteed to still resolve on a later launch).
+    static func savePDF(_ data: Data, for id: UUID) throws {
+        try data.write(to: pdfFileURL(for: id), options: .atomic)
+    }
+
+    /// The on-disk location of a `.pdf` book's original file, or `nil` if
+    /// no such file exists (an `.epub` book, or a `.pdf` book saved before
+    /// this file was kept around — see `LibraryIndexEntry.sourceType`'s
+    /// back-compat default). `PDFReaderView` opens this directly; it never
+    /// reads `Book.chapters` for a `.pdf` book.
+    static func pdfURL(for id: UUID) -> URL? {
+        let url = pdfFileURL(for: id)
+        return FileManager.default.fileExists(atPath: url.path) ? url : nil
+    }
+
     /// Writes a book's full contents to its own file. Runs off the main
     /// actor (see `AppStore.addBookToLibrary`) since encoding a book-length
     /// string is real work we don't want blocking the UI.
@@ -124,6 +225,7 @@ enum LibraryStore {
 
     static func delete(_ id: UUID) {
         try? FileManager.default.removeItem(at: fileURL(for: id))
+        try? FileManager.default.removeItem(at: pdfFileURL(for: id))
     }
 }
 
@@ -140,7 +242,7 @@ extension Book {
     /// same order. `nil`, or a shorter array than `chunks`, is fine: PDF
     /// imports pass `nil` since PDFKit's page text has no native markup to
     /// preserve, and any chapter without a corresponding entry just gets "".
-    static func from(filename: String, chunks: [String], titles: [String?], html: [String]? = nil, bookTitle: String? = nil) -> (book: Book, index: LibraryIndexEntry) {
+    static func from(filename: String, chunks: [String], titles: [String?], html: [String]? = nil, bookTitle: String? = nil, sourceType: BookSource = .epub) -> (book: Book, index: LibraryIndexEntry) {
         let id = UUID()
         var chapters: [BookChapter] = []
         chapters.reserveCapacity(chunks.count)
@@ -165,14 +267,15 @@ extension Book {
         let title = bookTitle?.isEmpty == false ? bookTitle!
             : (inferredTitle?.isEmpty == false ? inferredTitle! : displayTitle)
 
-        let book = Book(id: id, title: title, author: nil, chapters: chapters)
+        let book = Book(id: id, title: title, author: nil, chapters: chapters, sourceType: sourceType)
         let index = LibraryIndexEntry(
             id: id,
             title: title,
             author: nil,
             addedAt: Date(),
             chapterCount: chapters.count,
-            totalParagraphCount: totalParagraphs
+            totalParagraphCount: totalParagraphs,
+            sourceType: sourceType
         )
         return (book, index)
     }

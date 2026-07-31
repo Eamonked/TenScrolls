@@ -45,9 +45,12 @@ When no journal entries exist, the widget displays:
 
 ### Widget Data Export
 
-The main app exports journal data to shared UserDefaults:
-- **Location**: `group.ekme.TenScrolls`
-- **Key**: `journalWidgetData`
+The main app exports journal data to the App Group container (falling back
+to the App Group's suite UserDefaults if the container is unavailable — see
+`WidgetStorage` in `WidgetData.swift`):
+- **App Group**: value of the `APP_GROUP_IDENTIFIER` build setting (see
+  `TenScrolls.xcodeproj/project.pbxproj`), currently `group.ekme.TenScrolls`
+- **File / key**: `journalWidgetData.json` in the container, `journalWidgetData` in UserDefaults
 - **Limit**: Most recent 50 entries (to keep data size reasonable)
 
 ### Data Structure
