@@ -88,25 +88,44 @@ struct JournalWidgetEntryView: View {
     var entry: JournalProvider.Entry
     @Environment(\.widgetFamily) var family
 
+    /// Deep link back into the app for whichever entry this widget instance
+    /// is currently displaying — tapping the widget (including on the Lock
+    /// Screen, via `.accessoryRectangular`/`.accessoryCircular`/`.accessoryInline`)
+    /// opens the app with that entry scrolled to and expanded. See
+    /// `AppStore.handleIncomingURL`.
+    private var deepLinkURL: URL? {
+        guard let id = entry.selectedEntry?.id else { return nil }
+        var components = URLComponents()
+        components.scheme = "tenscrolls"
+        components.host = "journal"
+        components.queryItems = [URLQueryItem(name: "id", value: id)]
+        return components.url
+    }
+
     var body: some View {
-        switch family {
-        case .systemSmall:
-            JournalWidgetSmallView(entry: entry)
-        case .systemMedium:
-            JournalWidgetMediumView(entry: entry)
-        case .systemLarge:
-            JournalWidgetLargeView(entry: entry)
-        case .systemExtraLarge:
-            JournalWidgetLargeView(entry: entry)
-        case .accessoryCircular:
-            JournalWidgetAccessoryRectangularView(entry: entry)
-        case .accessoryRectangular:
-            JournalWidgetAccessoryRectangularView(entry: entry)
-        case .accessoryInline:
-            JournalWidgetAccessoryRectangularView(entry: entry)
-        @unknown default:
-            JournalWidgetSmallView(entry: entry)
+        Group {
+            switch family {
+            case .systemSmall:
+                JournalWidgetSmallView(entry: entry)
+            case .systemMedium:
+                JournalWidgetMediumView(entry: entry)
+            case .systemLarge:
+                JournalWidgetLargeView(entry: entry)
+            case .systemExtraLarge:
+                JournalWidgetLargeView(entry: entry)
+            case .accessoryCircular:
+                JournalWidgetAccessoryRectangularView(entry: entry)
+            case .accessoryRectangular:
+                JournalWidgetAccessoryRectangularView(entry: entry)
+            case .accessoryInline:
+                JournalWidgetAccessoryRectangularView(entry: entry)
+            @unknown default:
+                JournalWidgetSmallView(entry: entry)
+            }
         }
+        // A single tap target for the whole widget — simplest option, and the
+        // only one Lock Screen accessory families support anyway.
+        .widgetURL(deepLinkURL)
     }
 }
 

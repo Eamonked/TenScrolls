@@ -92,6 +92,12 @@ struct ScrollEditorSheet: View {
     var hasContent: Bool { !title.isEmpty || !notes.isEmpty || !theme.isEmpty }
     var days: Int { store.state.scrollDaysCompleted(scroll.id) }
     private var fontScale: CGFloat { CGFloat(store.state.readingFontScale) }
+    /// Locked scrolls can be drafted into ahead of time, but reading mode —
+    /// the paginated, stamp-eligible experience — stays behind the unlock.
+    /// This is the single switch that keeps `editing` from ever becoming
+    /// `false` for a locked scroll, which makes `readingView` structurally
+    /// unreachable rather than just hidden.
+    private var isLocked: Bool { scroll.status == .locked }
 
     var body: some View {
         let colors = AdaptivePalette(mode: appearanceMode)
@@ -127,13 +133,13 @@ struct ScrollEditorSheet: View {
                 ToolbarItem(placement: .cancellationAction) {
                     Button {
                         if editing {
-                            editing = false
+                            if isLocked { dismiss() } else { editing = false }
                         } else if canComplete {
                             dismiss()
                         }
                     } label: {
                         HStack(spacing: 4) {
-                            Image(systemName: editing ? "chevron.left" : "xmark")
+                            Image(systemName: (editing && !isLocked) ? "chevron.left" : "xmark")
                             if !editing && !canComplete && hasContent {
                                 Image(systemName: "lock.fill")
                                     .font(.system(size: 10))
@@ -171,7 +177,11 @@ struct ScrollEditorSheet: View {
                             updated.theme = theme
                             updated.notes = Scroll.normalizedNotes(notes)
                             onSave(updated)
-                            editing = false
+                            // Locked scrolls stay out of reading mode — save
+                            // and close rather than flipping `editing` off,
+                            // which would otherwise drop straight into
+                            // `readingView` for content that isn't unlocked yet.
+                            if isLocked { dismiss() } else { editing = false }
                         }
                     } else {
                         Button {
@@ -186,8 +196,10 @@ struct ScrollEditorSheet: View {
         }
         .presentationDetents([.large])
         .onAppear {
-            // If the scroll has no content yet, start in edit mode
-            if !hasContent { editing = true }
+            // If the scroll has no content yet, start in edit mode. Locked
+            // scrolls always start (and stay) in edit mode — reading is the
+            // part that's gated, not drafting content ahead of the unlock.
+            if !hasContent || isLocked { editing = true }
         }
         .onReceive(timer) { time in
             currentTime = time

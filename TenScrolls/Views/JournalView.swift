@@ -18,7 +18,34 @@ struct JournalView: View {
 
     var body: some View {
         let colors = AdaptivePalette(mode: appearanceMode)
-        ScrollView {
+        ScrollViewReader { proxy in
+            ScrollView {
+                journalContent(colors: colors)
+            }
+            .background(colors.background)
+            .onAppear { scrollToPendingEntry(proxy: proxy) }
+            .onChange(of: store.pendingJournalEntryId) { _, _ in
+                scrollToPendingEntry(proxy: proxy)
+            }
+        }
+    }
+
+    /// Scrolls to and (via `JournalEntryRow`'s `initiallyExpanded`) expands
+    /// the entry a Journal Reflection widget tap deep-linked to — see
+    /// `AppStore.pendingJournalEntryId`. The delay gives the just-selected
+    /// tab's rows a beat to lay out before `proxy.scrollTo` targets one.
+    private func scrollToPendingEntry(proxy: ScrollViewProxy) {
+        guard let id = store.pendingJournalEntryId else { return }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+            withAnimation {
+                proxy.scrollTo(id, anchor: .top)
+            }
+        }
+        store.pendingJournalEntryId = nil
+    }
+
+    @ViewBuilder
+    private func journalContent(colors: AdaptivePalette) -> some View {
             VStack(alignment: .leading, spacing: 10) {
                 HStack(alignment: .top) {
                     VStack(alignment: .leading, spacing: 4) {
@@ -99,6 +126,7 @@ struct JournalView: View {
                             JournalEntryRow(
                                 entry: entry,
                                 scroll: store.state.scrolls.first(where: { $0.id == entry.scrollId }),
+                                initiallyExpanded: entry.id == store.pendingJournalEntryId,
                                 onDelete: {
                                     store.deleteJournalEntry(entry.id)
                                 },
@@ -106,6 +134,7 @@ struct JournalView: View {
                                     store.convertToDraft(entry.id)
                                 }
                             )
+                            .id(entry.id)
                         }
                     }
                 }
@@ -118,8 +147,6 @@ struct JournalView: View {
             }
             .padding(.horizontal, 20)
             .padding(.top, 10)
-        }
-        .background(colors.background)
     }
 }
 
@@ -132,6 +159,7 @@ private struct DraftEntryRow: View {
     let onDelete: () -> Void
     @State private var editedText: String
     @State private var isEditing = false
+    @State private var showDeleteConfirmation = false
     @FocusState private var isFocused: Bool
 
     init(entry: JournalEntry, scroll: Scroll?, onUpdate: @escaping (String) -> Void, onPublish: @escaping () -> Void, onDelete: @escaping () -> Void) {
@@ -163,14 +191,25 @@ private struct DraftEntryRow: View {
                         }
                         .buttonStyle(.plain)
                     }
-                    
-                    Button(action: onDelete) {
-                        Image(systemName: "trash")
-                            .font(.system(size: 12))
-                            .foregroundColor(colors.textFaint)
-                    }
-                    .buttonStyle(.plain)
                 }
+            }
+            .contentShape(Rectangle())
+            .contextMenu {
+                Button(role: .destructive) {
+                    showDeleteConfirmation = true
+                } label: {
+                    Label("Delete Draft", systemImage: "trash")
+                }
+            }
+            .confirmationDialog(
+                "Delete this draft?",
+                isPresented: $showDeleteConfirmation,
+                titleVisibility: .visible
+            ) {
+                Button("Delete", role: .destructive) { onDelete() }
+                Button("Cancel", role: .cancel) {}
+            } message: {
+                Text("This can't be undone.")
             }
             
             TextEditor(text: $editedText)
@@ -203,7 +242,20 @@ private struct JournalEntryRow: View {
     let scroll: Scroll?
     let onDelete: () -> Void
     let onConvertToDraft: () -> Void
-    @State private var expanded = false
+    @State private var expanded: Bool
+    @State private var showDeleteConfirmation = false
+
+    /// `true` when this row should start expanded — set when a Journal
+    /// Reflection widget tap deep-linked straight to this entry (see
+    /// `AppStore.pendingJournalEntryId`). Only affects the row's initial
+    /// state; the reader's own taps still toggle `expanded` freely afterward.
+    init(entry: JournalEntry, scroll: Scroll?, initiallyExpanded: Bool = false, onDelete: @escaping () -> Void, onConvertToDraft: @escaping () -> Void) {
+        self.entry = entry
+        self.scroll = scroll
+        self.onDelete = onDelete
+        self.onConvertToDraft = onConvertToDraft
+        _expanded = State(initialValue: initiallyExpanded)
+    }
 
     /// "Scroll IV", a book title, or an em dash when the entry has neither —
     /// a plain journal reflection with no reading attached.
@@ -225,12 +277,6 @@ private struct JournalEntryRow: View {
                 Text("\(DateKey.short(entry.date)) · \(sourceLabel)")
                     .font(AppFont.mono(10.5)).foregroundColor(colors.textFaint)
                 Spacer()
-                if expanded {
-                    Button(action: onDelete) {
-                        Image(systemName: "trash").font(.system(size: 12)).foregroundColor(colors.textFaint)
-                    }
-                    .buttonStyle(.plain)
-                }
                 Image(systemName: "chevron.down")
                     .font(.system(size: 10, weight: .semibold))
                     .foregroundColor(colors.textFaint)
@@ -268,10 +314,20 @@ private struct JournalEntryRow: View {
             }
             
             Button(role: .destructive) {
-                onDelete()
+                showDeleteConfirmation = true
             } label: {
                 Label("Delete", systemImage: "trash")
             }
+        }
+        .confirmationDialog(
+            "Delete this entry?",
+            isPresented: $showDeleteConfirmation,
+            titleVisibility: .visible
+        ) {
+            Button("Delete", role: .destructive) { onDelete() }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("This can't be undone.")
         }
     }
 }
