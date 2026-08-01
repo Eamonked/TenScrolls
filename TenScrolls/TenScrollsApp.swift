@@ -19,6 +19,20 @@ final class AppDelegate: NSObject, UIApplicationDelegate {
     }
 }
 
+/// Maps the user's in-app appearance choice to the value `.preferredColorScheme`
+/// expects. `.system` must map to `nil` — that's the only way to tell
+/// SwiftUI/UIKit "don't override anything, defer to the real system setting."
+/// Passing `.light`/`.dark` here for the `.system` case (or hardcoding either
+/// case outright) would re-break `@Environment(\.colorScheme)` for every
+/// child view, including `AppearanceMode.resolved(systemColorScheme:)`.
+private func preferredColorScheme(for mode: AppearanceMode) -> ColorScheme? {
+    switch mode {
+    case .system: return nil
+    case .light: return .light
+    case .dark: return .dark
+    }
+}
+
 @main
 struct TenScrollsApp: App {
     @StateObject private var store = AppStore()
@@ -35,7 +49,7 @@ struct TenScrollsApp: App {
         WindowGroup {
             ContentView()
                 .environmentObject(store)
-                .preferredColorScheme(.dark)
+                .preferredColorScheme(preferredColorScheme(for: store.state.appearanceMode))
                 .onOpenURL { url in
                     store.handleIncomingURL(url)
                 }

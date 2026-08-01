@@ -96,6 +96,10 @@ final class AppStore: ObservableObject {
             guard let id = UUID(uuidString: cheerIdString) else { return }
             self?.acknowledgeCheer(id: id)
         }
+        notifier.onShareReceived = { [weak self] in
+            self?.selectedTab = 3
+            Task { await self?.refreshPendingShares() }
+        }
         syncNotifications()
 
         NotificationCenter.default.addObserver(
@@ -819,8 +823,10 @@ final class AppStore: ObservableObject {
     // MARK: - Scroll sharing & reading groups
 
     /// Polls for scrolls shared to this device. Cheap and safe to call often
-    /// (Caravan-tab appear, app foreground) — no push infra exists yet, so
-    /// this poll is the only delivery mechanism.
+    /// (Caravan-tab appear, app foreground) — the push (`send-share-push`)
+    /// is the primary delivery path, same pattern as cheers, but this poll
+    /// catches anything missed (notification dismissed unseen, permission
+    /// denied, no token registered yet, etc).
     func refreshPendingShares() async {
         pendingScrollShares = await sharing.fetchPendingShares()
     }

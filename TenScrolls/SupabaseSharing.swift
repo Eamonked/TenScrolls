@@ -75,20 +75,39 @@ actor SupabaseSharing {
 
     // MARK: - Scroll Sharing
 
+    private struct ShareScrollParams: Encodable {
+        let p_scroll_number: Int
+        let p_title: String
+        let p_notes: String
+        let p_to_trader_code: String?
+        let p_to_group_id: String?
+    }
+
+    private struct ShareScrollResponse: Decodable {
+        let success: Bool
+        let error: String?
+    }
+
     func shareScroll(scrollNumber: Int, title: String, notes: String, toTraderCode: String) async -> Bool {
         do {
             try await ensureSignedIn()
-            let ok: Bool = try await SupabaseConfig.client
-                .rpc("share_scroll_to_trader", params: [
-                    "p_scroll_number": String(scrollNumber),
-                    "p_title": title,
-                    "p_notes": notes,
-                    "p_to_trader_code": toTraderCode
-                ])
+            let params = ShareScrollParams(
+                p_scroll_number: scrollNumber,
+                p_title: title,
+                p_notes: notes,
+                p_to_trader_code: toTraderCode,
+                p_to_group_id: nil
+            )
+            let response: ShareScrollResponse = try await SupabaseConfig.client
+                .rpc("share_scroll", params: params)
                 .execute()
                 .value
-            return ok
+            if !response.success {
+                print("⚠️ shareScroll(toTraderCode: \(toTraderCode)) failed: \(response.error ?? "unknown_error")")
+            }
+            return response.success
         } catch {
+            print("⚠️ shareScroll(toTraderCode: \(toTraderCode)) failed: \(error)")
             return false
         }
     }
@@ -96,17 +115,23 @@ actor SupabaseSharing {
     func shareScroll(scrollNumber: Int, title: String, notes: String, toGroupId: UUID) async -> Bool {
         do {
             try await ensureSignedIn()
-            let ok: Bool = try await SupabaseConfig.client
-                .rpc("share_scroll_to_group", params: [
-                    "p_scroll_number": String(scrollNumber),
-                    "p_title": title,
-                    "p_notes": notes,
-                    "p_to_group_id": toGroupId.uuidString
-                ])
+            let params = ShareScrollParams(
+                p_scroll_number: scrollNumber,
+                p_title: title,
+                p_notes: notes,
+                p_to_trader_code: nil,
+                p_to_group_id: toGroupId.uuidString
+            )
+            let response: ShareScrollResponse = try await SupabaseConfig.client
+                .rpc("share_scroll", params: params)
                 .execute()
                 .value
-            return ok
+            if !response.success {
+                print("⚠️ shareScroll(toGroupId: \(toGroupId)) failed: \(response.error ?? "unknown_error")")
+            }
+            return response.success
         } catch {
+            print("⚠️ shareScroll(toGroupId: \(toGroupId)) failed: \(error)")
             return false
         }
     }

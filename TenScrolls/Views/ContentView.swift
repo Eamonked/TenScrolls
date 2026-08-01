@@ -25,15 +25,24 @@ enum ActiveSheet: Identifiable {
 struct ContentView: View {
     @EnvironmentObject var store: AppStore
     @Environment(\.scenePhase) private var scenePhase
+    @Environment(\.colorScheme) private var systemColorScheme
     @State private var activeSheet: ActiveSheet?
     @State private var activeCall: PendingCall?
     @State private var showWeeklyRecap = false
 
     var currentTheme: ThemeOption { Palette.theme(for: store.state.activeThemeId) }
 
+    /// The stored appearance preference (which may be `.system`) resolved
+    /// against the device's live system color scheme. Everything in this
+    /// view — and everything re-published to descendants below — uses this
+    /// concrete value rather than the raw stored one.
+    var resolvedAppearanceMode: AppearanceMode {
+        store.state.appearanceMode.resolved(systemColorScheme: systemColorScheme)
+    }
+
     var body: some View {
         ZStack(alignment: .top) {
-            let colors = AdaptivePalette(mode: store.state.appearanceMode)
+            let colors = AdaptivePalette(mode: resolvedAppearanceMode)
             colors.background.ignoresSafeArea()
 
             TabView(selection: $store.selectedTab) {
@@ -84,19 +93,19 @@ struct ContentView: View {
                 .tag(4)
             }
             .tint(currentTheme.brass)
-            .environment(\.appearanceMode, store.state.appearanceMode)
+            .injectAppearanceMode(store.state.appearanceMode)
 
             if let toast = store.toast {
                 ToastView(message: toast, brass: currentTheme.brass)
                     .transition(.move(edge: .top).combined(with: .opacity))
                     .padding(.top, 8)
                     .animation(.easeOut(duration: 0.3), value: store.toast)
-                    .environment(\.appearanceMode, store.state.appearanceMode)
+                    .injectAppearanceMode(store.state.appearanceMode)
             }
         }
         .sheet(item: $activeSheet) { sheet in
             sheetContent(for: sheet)
-                .environment(\.appearanceMode, store.state.appearanceMode)
+                .injectAppearanceMode(store.state.appearanceMode)
         }
         .fullScreenCover(item: $activeCall) { call in
             IncomingCallView(
@@ -104,7 +113,7 @@ struct ContentView: View {
                 onAccept: { store.answerCall() },
                 onDecline: { store.declineCall() }
             )
-            .environment(\.appearanceMode, store.state.appearanceMode)
+            .injectAppearanceMode(store.state.appearanceMode)
         }
         .onChange(of: store.incomingCall) { _, newCall in
             if let call = newCall {
@@ -131,7 +140,7 @@ struct ContentView: View {
         ) {
             if let milestone = store.milestoneReached {
                 MilestoneCelebrationView(milestone: milestone)
-                    .environment(\.appearanceMode, store.state.appearanceMode)
+                    .injectAppearanceMode(store.state.appearanceMode)
             }
         }
         .alert(
@@ -156,6 +165,10 @@ struct ContentView: View {
                 store.checkPendingAlarmSession()
                 store.syncNotifications()
                 runStartOfDayChecks()
+                // Shared scrolls have no push notification (unlike cheers), so
+                // foregrounding the app is the only reliable moment to pick up
+                // shares that arrived while this session was already running.
+                Task { await store.refreshPendingShares() }
             } else if phase == .inactive || phase == .background {
                 // Persistence is debounced while the app is active; make sure a
                 // pending write lands before we might get suspended or killed.

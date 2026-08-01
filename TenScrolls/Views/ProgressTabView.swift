@@ -266,38 +266,46 @@ struct ProgressTabView: View {
 
     private var appearanceSettings: some View {
         let colors = AdaptivePalette(mode: appearanceMode)
+        let rawMode = store.state.appearanceMode
         return VStack(alignment: .leading, spacing: 0) {
             SectionLabel(text: "Appearance")
             CardView {
-                HStack(spacing: 12) {
-                    Image(systemName: store.state.appearanceMode == .light ? "sun.max.fill" : "moon.fill")
-                        .font(.system(size: 18))
-                        .foregroundColor(theme.brass)
-                    
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text("Theme Mode")
-                            .font(.system(size: 14, weight: .medium))
-                            .foregroundColor(colors.text)
-                        Text(store.state.appearanceMode == .light ? "Light" : "Dark")
-                            .font(.system(size: 11))
-                            .foregroundColor(colors.textDim)
-                    }
-                    
-                    Spacer()
-                    
-                    Button {
-                        withAnimation(.easeInOut(duration: 0.3)) {
-                            store.setAppearanceMode(store.state.appearanceMode == .dark ? .light : .dark)
-                        }
-                    } label: {
-                        Text("Switch")
-                            .font(AppFont.mono(10.5))
-                            .padding(.horizontal, 12)
-                            .padding(.vertical, 7)
-                            .background(colors.ink2)
+                VStack(alignment: .leading, spacing: 14) {
+                    HStack(spacing: 12) {
+                        Image(systemName: rawMode.iconName)
+                            .font(.system(size: 18))
                             .foregroundColor(theme.brass)
-                            .overlay(RoundedRectangle(cornerRadius: 8).stroke(colors.inkLine, lineWidth: 1))
-                            .clipShape(RoundedRectangle(cornerRadius: 8))
+
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("Theme Mode")
+                                .font(.system(size: 14, weight: .medium))
+                                .foregroundColor(colors.text)
+                            Text(rawMode.label)
+                                .font(.system(size: 11))
+                                .foregroundColor(colors.textDim)
+                        }
+
+                        Spacer()
+                    }
+
+                    HStack(spacing: 8) {
+                        ForEach(AppearanceMode.allCases, id: \.self) { mode in
+                            let isSelected = rawMode == mode
+                            Button {
+                                withAnimation(.easeInOut(duration: 0.3)) {
+                                    store.setAppearanceMode(mode)
+                                }
+                            } label: {
+                                Text(mode.label)
+                                    .font(AppFont.mono(10.5))
+                                    .frame(maxWidth: .infinity)
+                                    .padding(.vertical, 7)
+                                    .background(isSelected ? theme.brass : colors.ink2)
+                                    .foregroundColor(isSelected ? Color(hex: "1A1207") : theme.brass)
+                                    .overlay(RoundedRectangle(cornerRadius: 8).stroke(colors.inkLine, lineWidth: 1))
+                                    .clipShape(RoundedRectangle(cornerRadius: 8))
+                            }
+                        }
                     }
                 }
             }

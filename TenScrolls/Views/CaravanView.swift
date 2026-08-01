@@ -20,7 +20,7 @@ struct CaravanView: View {
     @State private var loadError = false
     @State private var friendData: [String: FriendSnapshot] = [:]
     @State private var cheersReceived = 0
-    @State private var cheerSentFor: Set<String> = []
+    @State private var cheerSentAt: [String: Date] = [:]
     @State private var cheerAckStatus: [String: CheerAckStatus] = [:]
     #if canImport(UIKit)
     @State private var shareImage: UIImage?
@@ -87,6 +87,13 @@ struct CaravanView: View {
         .onAppear {
             if store.state.traderName.isEmpty { editingName = true }
             consumePendingFriendCode()
+            // Belt-and-suspenders: catches shares/cheers that arrived while
+            // this tab was already loaded and the user just switched back
+            // to it, since the .task(id:) above won't refire for that case.
+            Task {
+                await store.refreshPendingShares()
+                await store.refreshPendingCheers()
+            }
         }
         .onChange(of: store.pendingFriendCode) { _, _ in
             consumePendingFriendCode()
@@ -320,13 +327,16 @@ struct CaravanView: View {
                 CardView { EmptyState(text: "No friends added yet. Add a trader code above to start a streak duel.") }
             } else {
                 ForEach(store.state.friendCodes, id: \.self) { code in
+                    let ack = cheerAckStatus[code]
+                    let ackSentToday = (ack?.sent ?? false) && isToday(ack?.sent_at)
+                    let sentLocallyToday = isToday(cheerSentAt[code])
                     DuelCard(
                         code: code,
                         friend: friendData[code],
                         myStreak: myStreak,
                         theme: theme,
-                        cheerSent: cheerSentFor.contains(code) || (cheerAckStatus[code]?.sent ?? false),
-                        cheerSeen: cheerAckStatus[code]?.acknowledged ?? false,
+                        cheerSent: sentLocallyToday || ackSentToday,
+                        cheerSeen: ackSentToday && (ack?.acknowledged ?? false),
                         onRemove: { store.removeFriend(code) },
                         onCheer: { await sendCheer(code) }
                     )
@@ -412,9 +422,20 @@ struct CaravanView: View {
     }
 
     private func sendCheer(_ code: String) async {
-        cheerSentFor.insert(code)
+        cheerSentAt[code] = Date()
         await store.leaderboard.sendCheer(code: code)
         cheerAckStatus[code] = await store.leaderboard.fetchCheerAckStatus(code: code)
+    }
+
+    /// Whether `date` falls on today's calendar day. Used to let a duel card's
+    /// "Encouragement sent" / "Seen" state expire once the day rolls over,
+    /// instead of a stale "Seen" checkmark (or a permanently disabled button)
+    /// lingering on screen forever after the one cheer per sender/recipient/day
+    /// the backend allows. Once it's a new day, the card falls back to
+    /// "Send encouragement" so the duel stays alive.
+    private func isToday(_ date: Date?) -> Bool {
+        guard let date else { return false }
+        return Calendar.current.isDateInToday(date)
     }
 }
 

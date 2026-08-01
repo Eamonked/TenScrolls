@@ -9,9 +9,38 @@ struct ThemeOption: Identifiable, Equatable {
     let glow: Color
 }
 
-enum AppearanceMode: String, Codable {
-    case dark
+enum AppearanceMode: String, Codable, CaseIterable {
     case light
+    case dark
+    case system
+
+    /// Resolves `.system` to the concrete `.dark`/`.light` case based on the
+    /// device's current system color scheme. `.dark` and `.light` pass through
+    /// unchanged. Everything downstream (Palette, AdaptivePalette) only ever
+    /// deals in concrete dark/light — this is the single place `.system` gets
+    /// resolved away.
+    func resolved(systemColorScheme: ColorScheme) -> AppearanceMode {
+        switch self {
+        case .system: return systemColorScheme == .dark ? .dark : .light
+        case .dark, .light: return self
+        }
+    }
+
+    var label: String {
+        switch self {
+        case .dark: return "Dark"
+        case .light: return "Light"
+        case .system: return "System"
+        }
+    }
+
+    var iconName: String {
+        switch self {
+        case .dark: return "moon.fill"
+        case .light: return "sun.max.fill"
+        case .system: return "circle.lefthalf.filled"
+        }
+    }
 }
 
 enum Palette {
@@ -140,6 +169,27 @@ extension View {
     /// Helper to get colors that adapt to the current appearance mode from store state
     func adaptiveColors(for mode: AppearanceMode) -> AdaptivePalette {
         AdaptivePalette(mode: mode)
+    }
+
+    /// Injects the resolved appearance mode into the environment for this view
+    /// subtree. Takes the raw, possibly-`.system` mode as persisted in
+    /// `AppState` and resolves it against the device's live system color
+    /// scheme before publishing it — every consumer downstream (via
+    /// `@Environment(\.appearanceMode)`) then only ever sees concrete
+    /// `.dark`/`.light`. Use this instead of `.environment(\.appearanceMode, _)`
+    /// directly at any presentation boundary (sheets, full-screen covers, etc.)
+    /// where the environment needs to be re-published.
+    func injectAppearanceMode(_ rawMode: AppearanceMode) -> some View {
+        modifier(AppearanceModeInjector(rawMode: rawMode))
+    }
+}
+
+private struct AppearanceModeInjector: ViewModifier {
+    @Environment(\.colorScheme) private var systemColorScheme
+    let rawMode: AppearanceMode
+
+    func body(content: Content) -> some View {
+        content.environment(\.appearanceMode, rawMode.resolved(systemColorScheme: systemColorScheme))
     }
 }
 

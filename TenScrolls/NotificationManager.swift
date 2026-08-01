@@ -27,6 +27,11 @@ final class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
     /// notification's default tap. `cheerId` is threaded through as a String
     /// since `UNNotification` userInfo values must be property-list types.
     var onCheerAcknowledged: ((String) -> Void)?
+    /// Called when a scroll-share push arrives while the app is foregrounded,
+    /// or is tapped/opened from the background. Unlike cheers this needs no
+    /// explicit acknowledgment — it just means "go refetch pending shares",
+    /// since the push itself carries no local state to reconcile.
+    var onShareReceived: (() -> Void)?
 
     private let center = UNUserNotificationCenter.current()
 
@@ -42,7 +47,12 @@ final class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
         let gotItAction = UNNotificationAction(identifier: "got-it", title: "Got it", options: [])
         let cheerCategory = UNNotificationCategory(identifier: "cheer", actions: [gotItAction], intentIdentifiers: [], options: [])
 
-        center.setNotificationCategories([callCategory, cheerCategory])
+        // A share push just needs to route the recipient to the Caravan tab
+        // with fresh data — no explicit ack, unlike cheers.
+        let viewAction = UNNotificationAction(identifier: "view", title: "View", options: [.foreground])
+        let shareCategory = UNNotificationCategory(identifier: "share", actions: [viewAction], intentIdentifiers: [], options: [])
+
+        center.setNotificationCategories([callCategory, cheerCategory, shareCategory])
     }
 
     // MARK: - Authorization
@@ -115,6 +125,12 @@ final class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
             }
             return []
         }
+        // A share push landing while the app is already open won't otherwise
+        // trigger a refetch — there's no tap/response event in that case, so
+        // this is the only hook that fires. Still shows the normal banner.
+        if (info["type"] as? String) == "share" {
+            onShareReceived?()
+        }
         return [.banner, .sound]
     }
 
@@ -132,6 +148,15 @@ final class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
         // `didReceive` at all, so acknowledgment stays opt-in to an actual tap.
         if (info["type"] as? String) == "cheer", let cheerId = info["cheer_id"] as? String {
             onCheerAcknowledged?(cheerId)
+            return
+        }
+
+        // Share pushes: tapping the banner or the "View" action both just
+        // mean "take me to the Caravan tab with fresh pending shares" —
+        // there's no per-action branching like decline/got-it since a share
+        // has no negative response to distinguish.
+        if (info["type"] as? String) == "share" {
+            onShareReceived?()
             return
         }
 
