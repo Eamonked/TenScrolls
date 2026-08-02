@@ -194,7 +194,6 @@ struct ScrollEditorSheet: View {
             }
             .animation(.easeInOut(duration: 0.25), value: editing)
         }
-        .presentationDetents([.large])
         .onAppear {
             // If the scroll has no content yet, start in edit mode. Locked
             // scrolls always start (and stay) in edit mode — reading is the
@@ -255,7 +254,7 @@ struct ScrollEditorSheet: View {
         }
 
         for (index, paragraph) in scroll.paragraphs.enumerated() {
-            let isBookmarked = scroll.bookmarkParagraphIndex == index
+            let isBookmarked = effectiveBookmarkIndex == index
             var p = isBookmarked ? "<p data-p=\"\(index)\" class=\"bookmarked\">" : "<p data-p=\"\(index)\">"
             if isBookmarked {
                 p += "<span class=\"bookmark-label\">You stopped here</span>"
@@ -270,6 +269,17 @@ struct ScrollEditorSheet: View {
         // for the next header/footer tweak that needs a non-brass color.
         _ = colors
         return html
+    }
+
+    /// The bookmark position `scrollHTML` actually renders. `scroll` is a
+    /// snapshot taken when the sheet was presented (see its doc comment
+    /// above), so it never reflects a tap that happened during this
+    /// reading session — `justBookmarkedIndex` (set the instant a paragraph
+    /// is tapped, see `onParagraphTap` below) takes priority over it so
+    /// the “You stopped here” marker updates immediately instead of only
+    /// on the next time the scroll is opened.
+    private var effectiveBookmarkIndex: Int? {
+        justBookmarkedIndex ?? scroll.bookmarkParagraphIndex
     }
 
     /// HTML counterpart to `statusPill`, since the status pill needs to be
@@ -327,7 +337,8 @@ struct ScrollEditorSheet: View {
                                 justBookmarkedIndex = index
                             }
                             store.setBookmark(scrollId: scroll.id, paragraphIndex: index)
-                        }
+                        },
+                        preservePositionAcrossReload: true
                     )
                     .background(AdaptivePalette(mode: appearanceMode).ink2)
                     .onChange(of: htmlCurrentPage) { _, newValue in
@@ -362,7 +373,8 @@ struct ScrollEditorSheet: View {
         }
         .onChange(of: hasReachedLastPage) { _, finished in
             // The reading is done — the bookmark has served its purpose.
-            if finished, scroll.bookmarkParagraphIndex != nil {
+            if finished, effectiveBookmarkIndex != nil {
+                justBookmarkedIndex = nil
                 store.setBookmark(scrollId: scroll.id, paragraphIndex: nil)
             }
         }

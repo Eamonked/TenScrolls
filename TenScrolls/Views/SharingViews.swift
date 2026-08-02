@@ -132,17 +132,20 @@ struct ShareScrollSheet: View {
     }
 }
 
-// MARK: - Incoming shared scrolls
+// MARK: - Received scroll notification detail
 
-/// Shows all scrolls shared to this device and lets the reader import each
-/// into one of their ten scroll slots or dismiss it. Presented from the
-/// `incomingSharesBanner` in `CaravanView`.
-struct IncomingSharedScrollsView: View {
+/// Full detail for a single scroll shared to this device — presented when the
+/// reader taps its row in the Caravan's "Notifications" section. Shows the
+/// complete title/sender/notes (the notification row itself only has room for
+/// a preview) and offers Download (import into a slot) or Dismiss.
+struct ScrollShareDetailView: View {
     @EnvironmentObject var store: AppStore
     @Environment(\.appearanceMode) var appearanceMode
     @Environment(\.dismiss) private var dismiss
 
-    @State private var slotPickerShare: PendingScrollShare?
+    let share: PendingScrollShare
+
+    @State private var showSlotPicker = false
 
     var theme: ThemeOption { Palette.theme(for: store.state.activeThemeId) }
 
@@ -150,76 +153,72 @@ struct IncomingSharedScrollsView: View {
         let colors = AdaptivePalette(mode: appearanceMode)
         NavigationStack {
             ScrollView {
-                VStack(spacing: 14) {
-                    if store.pendingScrollShares.isEmpty {
-                        EmptyState(text: "No shared scrolls waiting.")
-                    } else {
-                        ForEach(store.pendingScrollShares) { share in
-                            shareCard(share, colors: colors)
+                VStack(alignment: .leading, spacing: 16) {
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text("SHARED SCROLL").font(AppFont.mono(11)).tracking(1.4).foregroundColor(theme.brass)
+                        Text(share.title.isEmpty ? "Scroll \(share.scroll_number)" : share.title)
+                            .font(AppFont.display(22)).foregroundColor(colors.text)
+                        Text("From \(share.from_trader_name.isEmpty ? share.from_trader_code : share.from_trader_name)\(share.group_name.map { " · \($0)" } ?? "")")
+                            .font(AppFont.mono(11)).foregroundColor(colors.textFaint)
+                    }
+
+                    if !share.notes.isEmpty {
+                        CardView {
+                            Text(share.notes)
+                                .font(.system(size: 14)).foregroundColor(colors.text)
+                                .fixedSize(horizontal: false, vertical: true)
                         }
+                    }
+
+                    HStack(spacing: 10) {
+                        Button {
+                            showSlotPicker = true
+                        } label: {
+                            Label("Download", systemImage: "tray.and.arrow.down.fill")
+                        }
+                        .buttonStyle(PrimaryButtonStyle(brass: theme.brass, glow: theme.glow))
+
+                        Button("Dismiss") {
+                            store.dismissSharedScroll(share)
+                            dismiss()
+                        }
+                        .buttonStyle(GhostButtonStyle())
                     }
                 }
                 .padding(.horizontal, 20)
                 .padding(.top, 10)
             }
             .background(colors.background)
-            .navigationTitle("Shared With You")
+            .navigationTitle("Notification")
             .inlineNavigationBarTitle()
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
-                    Button("Done") { dismiss() }
+                    Button("Close") { dismiss() }
                         .foregroundColor(colors.textDim)
                 }
             }
-            .sheet(item: $slotPickerShare) { share in
-                SlotPickerSheet(share: share)
+            .sheet(isPresented: $showSlotPicker) {
+                SlotPickerSheet(share: share, onImported: { dismiss() })
                     .environment(\.appearanceMode, appearanceMode)
-            }
-        }
-    }
-
-    private func shareCard(_ share: PendingScrollShare, colors: AdaptivePalette) -> some View {
-        CardView {
-            VStack(alignment: .leading, spacing: 8) {
-                HStack {
-                    Text(share.title.isEmpty ? "Scroll \(share.scroll_number)" : share.title)
-                        .font(AppFont.display(16)).foregroundColor(colors.text)
-                    Spacer()
-                }
-                Text("From \(share.from_trader_name.isEmpty ? share.from_trader_code : share.from_trader_name)")
-                    .font(AppFont.mono(11)).foregroundColor(colors.textFaint)
-
-                if !share.notes.isEmpty {
-                    Text(String(share.notes.prefix(100)) + (share.notes.count > 100 ? "…" : ""))
-                        .font(.system(size: 13)).foregroundColor(colors.textDim)
-                        .lineLimit(3)
-                }
-
-                HStack(spacing: 10) {
-                    Button("Import") {
-                        slotPickerShare = share
-                    }
-                    .buttonStyle(PrimaryButtonStyle(brass: theme.brass, glow: theme.glow))
-
-                    Button("Dismiss") {
-                        store.dismissSharedScroll(share)
-                    }
-                    .buttonStyle(GhostButtonStyle())
-                }
-                .padding(.top, 6)
             }
         }
     }
 }
 
 /// Lets the reader choose which of their ten scroll slots to import a
-/// shared scroll into. Presented from `IncomingSharedScrollsView`.
-private struct SlotPickerSheet: View {
+/// shared scroll into. Presented from `ScrollShareDetailView`.
+struct SlotPickerSheet: View {
     @EnvironmentObject var store: AppStore
     @Environment(\.appearanceMode) var appearanceMode
     @Environment(\.dismiss) private var dismiss
 
     let share: PendingScrollShare
+    /// Called right after a successful import, in addition to this sheet's
+    /// own dismissal — lets a presenting view (like `ScrollShareDetailView`)
+    /// close itself too instead of leaving the reader back on a stale detail
+    /// screen for a notification that's already been handled. Defaults to a
+    /// no-op so this view still works standalone.
+    var onImported: () -> Void = {}
 
     var theme: ThemeOption { Palette.theme(for: store.state.activeThemeId) }
 
@@ -236,6 +235,7 @@ private struct SlotPickerSheet: View {
                         Button {
                             store.importSharedScroll(share, intoSlot: scroll.id)
                             dismiss()
+                            onImported()
                         } label: {
                             HStack {
                                 Text("Scroll \(scroll.roman)")

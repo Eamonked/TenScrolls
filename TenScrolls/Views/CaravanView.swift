@@ -26,7 +26,7 @@ struct CaravanView: View {
     @State private var shareImage: UIImage?
     @State private var showStreakShare = false
     #endif
-    @State private var showIncomingShares = false
+    @State private var selectedShare: PendingScrollShare?
     @State private var groupNameDraft = ""
     @State private var groupCodeDraft = ""
     @State private var groupMessage: String?
@@ -64,9 +64,7 @@ struct CaravanView: View {
                 if !store.pendingCheers.isEmpty {
                     pendingCheersBanner
                 }
-                if !store.pendingScrollShares.isEmpty {
-                    incomingSharesBanner
-                }
+                notificationsSection
                 addFriendCard
                 duelsSection
                 readingGroupsSection
@@ -105,8 +103,8 @@ struct CaravanView: View {
             }
         }
         #endif
-        .sheet(isPresented: $showIncomingShares) {
-            IncomingSharedScrollsView()
+        .sheet(item: $selectedShare) { share in
+            ScrollShareDetailView(share: share)
                 .environment(\.appearanceMode, appearanceMode)
         }
     }
@@ -139,22 +137,55 @@ struct CaravanView: View {
         }
     }
 
-    private var incomingSharesBanner: some View {
+    /// Everything another trader has sent this device that's still awaiting a
+    /// decision — currently just shared scrolls, but the section (and
+    /// `notificationRow`) is written generically so other received-item types
+    /// can join it later without a redesign. Always visible, like the other
+    /// Caravan sections, so an empty state is as discoverable as a full one.
+    private var notificationsSection: some View {
         let colors = AdaptivePalette(mode: appearanceMode)
-        return Button {
-            showIncomingShares = true
+        return VStack(alignment: .leading, spacing: 0) {
+            SectionLabel(
+                text: "Notifications",
+                trailing: store.pendingScrollShares.isEmpty ? nil : "\(store.pendingScrollShares.count) new"
+            )
+            CardView {
+                if store.pendingScrollShares.isEmpty {
+                    EmptyState(text: "Nothing waiting on you right now. Shared scrolls will show up here.")
+                } else {
+                    VStack(spacing: 0) {
+                        ForEach(Array(store.pendingScrollShares.enumerated()), id: \.element.id) { idx, share in
+                            if idx > 0 {
+                                Divider().overlay(colors.inkLine)
+                            }
+                            notificationRow(share, colors: colors)
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    private func notificationRow(_ share: PendingScrollShare, colors: AdaptivePalette) -> some View {
+        Button {
+            selectedShare = share
         } label: {
-            HStack(spacing: 10) {
-                Image(systemName: "tray.and.arrow.down.fill").foregroundColor(theme.brass)
-                Text("\(store.pendingScrollShares.count) scroll\(store.pendingScrollShares.count == 1 ? "" : "s") shared with you")
-                    .font(.system(size: 13, weight: .semibold)).foregroundColor(colors.text)
+            HStack(spacing: 12) {
+                Circle()
+                    .fill(theme.brass.opacity(0.15))
+                    .frame(width: 34, height: 34)
+                    .overlay(Image(systemName: "tray.and.arrow.down.fill").font(.system(size: 13)).foregroundColor(theme.brass))
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("\(share.from_trader_name.isEmpty ? share.from_trader_code : share.from_trader_name) shared \(share.title.isEmpty ? "a scroll" : "\u{201C}\(share.title)\u{201D}")")
+                        .font(.system(size: 13, weight: .semibold)).foregroundColor(colors.text)
+                        .lineLimit(2)
+                    Text(timeAgo(share.created_at))
+                        .font(AppFont.mono(10.5)).foregroundColor(colors.textFaint)
+                }
                 Spacer()
                 Image(systemName: "chevron.right").font(.system(size: 12)).foregroundColor(colors.textFaint)
             }
-            .padding(14)
-            .background(theme.brass.opacity(0.12))
-            .overlay(RoundedRectangle(cornerRadius: 14).stroke(theme.brassDim, lineWidth: 1))
-            .clipShape(RoundedRectangle(cornerRadius: 14))
+            .padding(.vertical, 10)
         }
         .buttonStyle(.plain)
     }

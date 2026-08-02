@@ -503,6 +503,11 @@ struct LeaderboardEntry: Identifiable, Equatable, Sendable {
 /// A scroll shared to this device (directly or via a reading group) that
 /// hasn't been imported or dismissed yet. Decoded from the
 /// `fetch_pending_shares` RPC response.
+///
+/// Field names here must match the RPC's returned columns exactly — a
+/// mismatch doesn't produce a compile error or a visible runtime error, it
+/// just makes every decode of the RPC response fail silently, which is
+/// exactly what `shared_at` (the RPC returns `created_at`) was doing.
 struct PendingScrollShare: Identifiable, Decodable, Equatable {
     let id: UUID
     let scroll_number: Int
@@ -510,7 +515,10 @@ struct PendingScrollShare: Identifiable, Decodable, Equatable {
     let notes: String
     let from_trader_code: String
     let from_trader_name: String
-    let shared_at: Date
+    /// Non-nil only when this share came through a reading group rather than
+    /// directly to a trader code.
+    let group_name: String?
+    let created_at: Date
 }
 
 /// A cheer sent to this user that hasn't been acknowledged yet. Decoded from

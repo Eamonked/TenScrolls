@@ -15,6 +15,12 @@ import Supabase
 /// payload — see CARAVAN_SOCIAL_SCOPE.md, workstream E, for the follow-up
 /// plan. Cheers are already fully server-enforced (one per sender/recipient/
 /// day, via the `send_cheer` RPC), since those don't depend on session data.
+///
+/// **Read path note:** reads go through `get_leaderboard` / `get_trader_by_code`
+/// (SECURITY DEFINER RPCs), not a direct table SELECT — see
+/// 002_leaderboard_gating.sql. The table's old public-SELECT policy let any
+/// client query it with arbitrary filters/order; these RPCs are also where
+/// free/Plus leaderboard tiering will be added later.
 actor SupabaseLeaderboard {
     init() {}
 
@@ -56,7 +62,14 @@ actor SupabaseLeaderboard {
                     .execute()
                     .value
                 if response.success {
-                    return candidate
+                    // Trust the server's persisted code, not the local candidate —
+                    // a stale row (e.g. after a local reset regenerated a new
+                    // preferred code while the old anonymous session/users row
+                    // was still around) can return success without actually
+                    // taking the new code. See claim_identity's `ON CONFLICT (id)
+                    // DO UPDATE` — it now updates trader_code too, but this guards
+                    // against ever silently drifting out of sync with the server again.
+                    return response.trader_code ?? candidate
                 }
                 if response.error == "code_taken" {
                     candidate = Self.generateCode()
@@ -142,13 +155,16 @@ actor SupabaseLeaderboard {
         ))
     }
 
+    /// Reads via `get_leaderboard`, a SECURITY DEFINER RPC — the table's
+    /// direct-SELECT policy was removed (see 002_leaderboard_gating.sql)
+    /// because it let any client query `leaderboard_snapshots` with
+    /// arbitrary filters/order, independent of what this call asks for.
+    /// Rank is now computed server-side; this is also the single choke
+    /// point where free/Plus tiering will be added later.
     func fetchLeaderboard(limit: Int = 50) async throws -> [LeaderboardEntry] {
         try await ensureSignedIn()
         let rows: [SnapshotRowDecoded] = try await SupabaseConfig.client
-            .from("leaderboard_snapshots")
-            .select()
-            .order("xp", ascending: false)
-            .limit(limit)
+            .rpc("get_leaderboard", params: ["p_limit": limit])
             .execute()
             .value
         return rows.map(toEntry)
@@ -156,14 +172,13 @@ actor SupabaseLeaderboard {
 
     // MARK: - Fetch a single friend by trader code
 
+    /// Reads via `get_trader_by_code`, for the same reason as
+    /// `fetchLeaderboard` above — no more direct table SELECT.
     func fetchFriend(code: String) async -> FriendSnapshot? {
         do {
             try await ensureSignedIn()
             let rows: [SnapshotRowDecoded] = try await SupabaseConfig.client
-                .from("leaderboard_snapshots")
-                .select()
-                .eq("trader_code", value: code)
-                .limit(1)
+                .rpc("get_trader_by_code", params: ["p_code": code])
                 .execute()
                 .value
             return rows.first.map(toEntry)?.snapshot

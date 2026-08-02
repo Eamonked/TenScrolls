@@ -32,6 +32,16 @@ struct AppState: Codable, Equatable, Sendable {
     /// mirroring Apple Books' single "Aa" size control). Optional for backward
     /// compatibility; 1.0 is the unscaled default size.
     var storedReadingFontScale: Double? = nil
+    
+    /// Cached subscription status from the server. Optional for backward compatibility.
+    var cachedSubscriptionStatus: SubscriptionStatus? = nil
+    
+    /// Whether the Day 3 trial offer has been shown (and dismissed/accepted).
+    /// Prevents showing it repeatedly.
+    var hasShownTrialOffer: Bool? = nil
+    
+    /// Whether the Day 30 paywall has been shown. Tracks first encounter.
+    var hasShownDay30Paywall: Bool? = nil
 
     /// Library shelf: lightweight metadata only (title/author/bookmark) for
     /// full-length books imported outside the ten scrolls. The actual book
@@ -61,6 +71,16 @@ struct AppState: Codable, Equatable, Sendable {
     var readingFontScale: Double {
         get { min(1.6, max(0.8, storedReadingFontScale ?? 1.0)) }
         set { storedReadingFontScale = min(1.6, max(0.8, newValue)) }
+    }
+    
+    /// Subscription status with fallback to free if not yet fetched
+    var subscriptionStatus: SubscriptionStatus {
+        cachedSubscriptionStatus ?? .free
+    }
+    
+    /// Whether user has Plus access (active subscription or active trial)
+    var hasPlusAccess: Bool {
+        subscriptionStatus.hasAccess
     }
 
     static func defaultState() -> AppState {
@@ -291,5 +311,38 @@ extension AppState {
 
     var achievements: [(def: AchievementDef, earned: Bool)] {
         Constants.achievementDefs.map { ($0, $0.test(self)) }
+    }
+    
+    /// Counts consecutive completed days from today backwards (distinct from currentStreak
+    /// which includes shield days). Used for trial eligibility trigger (3 consecutive days).
+    var consecutiveDaysCompleted: Int {
+        var count = 0
+        var key = DateKey.today()
+        
+        // Only count days with all three sessions actually completed, no shields
+        for _ in 0..<365 {
+            if let entry = log[key], entry.allComplete {
+                count += 1
+                key = DateKey.add(-1, to: key)
+            } else {
+                break
+            }
+        }
+        
+        return count
+    }
+    
+    /// Whether the user should be offered a trial (3 consecutive days completed)
+    var shouldOfferTrial: Bool {
+        consecutiveDaysCompleted >= 3 &&
+        !(hasShownTrialOffer ?? false) &&
+        subscriptionStatus == .free
+    }
+    
+    /// Whether the Day 30 paywall should be shown (for Scroll II access)
+    var shouldShowDay30Paywall: Bool {
+        totalDaysCompleted >= 30 &&
+        !(hasShownDay30Paywall ?? false) &&
+        !hasPlusAccess
     }
 }

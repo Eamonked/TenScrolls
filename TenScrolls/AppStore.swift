@@ -57,7 +57,14 @@ final class AppStore: ObservableObject {
     private nonisolated let defaultsKey = "ten-scrolls-state"
     let leaderboard = SupabaseLeaderboard()
     let sharing = SupabaseSharing()
+    let subscription = SupabaseSubscription()
     let notifier = NotificationManager()
+    
+    /// Set when the Day 3 trial offer should be presented
+    @Published var shouldShowTrialOffer: Bool = false
+    
+    /// Set when the Day 30 paywall should be presented
+    @Published var shouldShowDay30Paywall: Bool = false
 
     init() {
         let loadedState: AppState
@@ -452,6 +459,9 @@ final class AppStore: ObservableObject {
 
         state.bestStreak = max(state.bestStreak, state.currentStreak)
         afterMutation()
+        
+        // Check for engagement milestones (Day 3 trial offer)
+        checkEngagementMilestones()
         
         // Cancel the escalation call immediately when a session is completed
         if !wasSet && entry.isCompleted(for: sessionType) {
@@ -946,5 +956,139 @@ final class AppStore: ObservableObject {
     func dismissSharedScroll(_ share: PendingScrollShare) {
         pendingScrollShares.removeAll { $0.id == share.id }
         Task { await sharing.resolveShare(id: share.id, status: "dismissed") }
+    }
+
+    // MARK: - Subscription & Monetization
+    
+    /// Fetches and caches the user's current subscription status
+    func refreshSubscriptionStatus() async {
+        do {
+            let info = try await subscription.fetchSubscriptionStatus()
+            state.cachedSubscriptionStatus = info.subscriptionStatus
+            afterMutation()
+            
+            // Check for trial expiry
+            let expiryResult = try await subscription.checkTrialExpiry()
+            if expiryResult.expired {
+                state.cachedSubscriptionStatus = .lapsed
+                afterMutation()
+                showToast("Your trial has ended. Upgrade to keep full access.")
+            }
+        } catch {
+            // Best effort - leave cached status unchanged on failure
+        }
+    }
+    
+    /// Starts a free trial (called from trial offer UI)
+    func startTrial() async -> Bool {
+        do {
+            let result = try await subscription.startTrial()
+            if result.success {
+                state.cachedSubscriptionStatus = .trialing
+                state.hasShownTrialOffer = true
+                afterMutation()
+                showToast("Trial started! Enjoy full access for 10 days.")
+                return true
+            } else {
+                showToast(result.message ?? "Couldn't start trial. Try again.")
+                return false
+            }
+        } catch {
+            showToast("Couldn't start trial. Check your connection.")
+            return false
+        }
+    }
+    
+    /// Activates Plus subscription after successful IAP purchase
+    func activateSubscription() async -> Bool {
+        do {
+            let result = try await subscription.activateSubscription()
+            if result.success {
+                state.cachedSubscriptionStatus = .active
+                afterMutation()
+                showToast("Welcome to Plus! Full access unlocked.")
+                return true
+            }
+            return false
+        } catch {
+            showToast("Couldn't activate subscription. Contact support.")
+            return false
+        }
+    }
+    
+    /// Checks engagement milestones and triggers trial offer at Day 3.
+    /// Skipped while an incoming call is up — that's the one screen in this
+    /// app that's genuinely time-sensitive and shouldn't be interrupted.
+    func checkEngagementMilestones() {
+        guard incomingCall == nil else { return }
+
+        // Day 3 consecutive days trigger
+        if state.shouldOfferTrial && !shouldShowTrialOffer {
+            shouldShowTrialOffer = true
+        }
+        
+        // Day 30 paywall check
+        if state.shouldShowDay30Paywall && !shouldShowDay30Paywall {
+            shouldShowDay30Paywall = true
+        }
+    }
+    
+    /// Dismisses the trial offer (user said no or dismissed)
+    func dismissTrialOffer() {
+        state.hasShownTrialOffer = true
+        shouldShowTrialOffer = false
+        afterMutation()
+    }
+    
+    /// Dismisses the Day 30 paywall
+    func dismissDay30Paywall() {
+        state.hasShownDay30Paywall = true
+        shouldShowDay30Paywall = false
+        afterMutation()
+    }
+    
+    /// Checks if user can access a specific scroll based on subscription + progress
+    func canAccessScroll(_ scrollId: Int) async -> ScrollAccess {
+        // Scroll I is always accessible
+        if scrollId == 1 {
+            return ScrollAccess(scrollId: scrollId, isAccessible: true, reason: .unlocked)
+        }
+        
+        // Scroll II and beyond: check Day 30 paywall
+        if scrollId == 2 && state.totalDaysCompleted >= 30 {
+            // Hit the paywall
+            if state.hasPlusAccess {
+                return ScrollAccess(scrollId: scrollId, isAccessible: true, reason: .trialActive)
+            } else {
+                do {
+                    let canAccess = try await subscription.canAccessScrollTwo()
+                    if canAccess {
+                        return ScrollAccess(scrollId: scrollId, isAccessible: true, reason: .unlocked)
+                    } else {
+                        return ScrollAccess(
+                            scrollId: scrollId,
+                            isAccessible: false,
+                            reason: .subscriptionRequired(daysCompleted: state.totalDaysCompleted)
+                        )
+                    }
+                } catch {
+                    // On error, default to checking local state
+                    return ScrollAccess(
+                        scrollId: scrollId,
+                        isAccessible: false,
+                        reason: .subscriptionRequired(daysCompleted: state.totalDaysCompleted)
+                    )
+                }
+            }
+        }
+        
+        // Normal unlock progression for other scrolls
+        return ScrollAccess(scrollId: scrollId, isAccessible: true, reason: .unlocked)
+    }
+    
+    /// Call this on app foreground and after session completion
+    func onAppForeground() async {
+        await refreshSubscriptionStatus()
+        checkEngagementMilestones()
     }
 }

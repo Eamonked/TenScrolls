@@ -40,6 +40,7 @@ private func libraryContextMenuItems(
 struct LibraryView: View {
     @EnvironmentObject var store: AppStore
     @Environment(\.appearanceMode) var appearanceMode
+    @Environment(\.dismiss) private var dismiss
     @State private var showImport = false
     @State private var pendingDelete: LibraryIndexEntry?
     @AppStorage("tenscrolls.libraryViewMode") private var viewModeRaw: String = LibraryViewMode.grid.rawValue
@@ -122,6 +123,11 @@ struct LibraryView: View {
             }
             .background(colors.background)
             .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button { dismiss() } label: { Image(systemName: "xmark") }
+                }
+            }
         }
         .sheet(isPresented: $showImport) {
             DocumentImportSheet(defaultDestination: .library)

@@ -91,6 +91,19 @@ struct BookChapterWebView: UIViewRepresentable {
     /// bridge can serve several different tappable elements in the same
     /// document.
     var onActionTap: ((String) -> Void)? = nil
+    /// When true, a reload is always treated as a same-position reformat —
+    /// the current scroll fraction is preserved and `pageCount` is kept as
+    /// a placeholder — even when `html` itself differs from what's
+    /// currently loaded. Sized for `ScrollEditorSheet`, whose `html` while
+    /// reading only ever changes because a paragraph tap toggled which one
+    /// carries the `bookmarked` class (see `onParagraphTap`); the content
+    /// itself hasn't moved, so the normal `sameContent`-only preservation
+    /// (which would otherwise fall back to `initialFraction` and visibly
+    /// jump the reader away from their current page) doesn't apply here.
+    /// Left `false` (the default) for callers like `LibraryReaderView`,
+    /// where a changed `html` really does mean new content — a genuine
+    /// chapter change — that should land on `initialFraction`.
+    var preservePositionAcrossReload: Bool = false
 
     /// Side margin each page gets — half of `column-gap`, the other half
     /// belonging to the adjacent page. Mirrors `TextPaginator.horizontalPadding / 2`.
@@ -197,10 +210,14 @@ struct BookChapterWebView: UIViewRepresentable {
         // the chapter's content itself hasn't changed — a size/theme/font
         // change on the SAME chapter should keep the reader's place, but
         // switching to a genuinely new chapter should not carry over the
-        // old chapter's fraction.
+        // old chapter's fraction. `preservePositionAcrossReload` widens
+        // this for callers (`ScrollEditorSheet`) whose `html` changes for
+        // reasons that aren't a content change at all — see that
+        // property's doc comment.
         let sameContent = context.coordinator.loadedHTML == html
+        let shouldPreservePosition = sameContent || preservePositionAcrossReload
         let fraction: Double?
-        if sameContent, context.coordinator.pageCount > 0 {
+        if shouldPreservePosition, context.coordinator.pageCount > 0 {
             fraction = context.coordinator.currentFraction(in: webView)
         } else {
             fraction = initialFraction
@@ -220,7 +237,7 @@ struct BookChapterWebView: UIViewRepresentable {
         // starting another one; `didFinish` below picks up the latest
         // pending request (if any) once the current one actually settles,
         // so only ever one navigation is in flight at a time.
-        let request = Coordinator.RenderRequest(html: html, key: key, fraction: fraction, isReformat: sameContent)
+        let request = Coordinator.RenderRequest(html: html, key: key, fraction: fraction, isReformat: shouldPreservePosition)
         if context.coordinator.isNavigating {
             context.coordinator.pendingRender = request
             return
@@ -699,9 +716,11 @@ struct BookChapterWebView: UIViewRepresentable {
         a { color: \(brassColor); text-decoration: none; -webkit-touch-callout: none; }
         * { -webkit-tap-highlight-color: transparent; }
         /* Bookmark styling for `ScrollEditorSheet.scrollHTML`'s `data-p`
-           paragraphs — baked into the document rather than toggled live,
-           since the bookmarked index only ever changes on a fresh reload
-           (a paragraph tap regenerates the whole `html` string). */
+           paragraphs. A paragraph tap regenerates the whole `html` string
+           with the new index marked, so this class re-renders on the very
+           next `updateUIView` — `preservePositionAcrossReload` (see that
+           property's doc comment) is what keeps that reload from also
+           jumping the reader's scroll position. */
         p.bookmarked { background: \(brassColor)12; border-radius: 8px; padding: 8px 10px; margin-left: -10px; margin-right: -10px; }
         .bookmark-label { display: block; font-family: -apple-system, BlinkMacSystemFont, sans-serif; font-size: 10px; letter-spacing: 0.6px; text-transform: uppercase; color: \(brassColor); margin-bottom: 6px; }
         </style>

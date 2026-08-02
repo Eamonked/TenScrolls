@@ -32,6 +32,49 @@ struct ContentView: View {
 
     var currentTheme: ThemeOption { Palette.theme(for: store.state.activeThemeId) }
 
+    /// `.scrollEditor` (the Scroll reading/editing view) and `.library`
+    /// (the Shelf, and — pushed inside its own `NavigationStack` — the Book
+    /// reading view) are the two deep-reading surfaces in the app, so they
+    /// present full screen via `.fullScreenCover` rather than as a
+    /// card-style `.sheet`. Every other `ActiveSheet` case is a lighter,
+    /// dismiss-anytime overlay and keeps the standard sheet presentation.
+    /// Both presentations below key off this same single source of truth
+    /// so only one is ever active at a time.
+    private func isFullScreenPresentation(_ sheet: ActiveSheet) -> Bool {
+        switch sheet {
+        case .scrollEditor, .library: return true
+        case .journal, .info, .notifSettings, .skipReason, .search: return false
+        }
+    }
+
+    /// Filters `activeSheet` down to the card-style cases for `.sheet(item:)`.
+    private var sheetBinding: Binding<ActiveSheet?> {
+        Binding(
+            get: { activeSheet.flatMap { isFullScreenPresentation($0) ? nil : $0 } },
+            set: { newValue in
+                if let newValue {
+                    activeSheet = newValue
+                } else if let current = activeSheet, !isFullScreenPresentation(current) {
+                    activeSheet = nil
+                }
+            }
+        )
+    }
+
+    /// Filters `activeSheet` down to the full-screen cases for `.fullScreenCover(item:)`.
+    private var fullScreenSheetBinding: Binding<ActiveSheet?> {
+        Binding(
+            get: { activeSheet.flatMap { isFullScreenPresentation($0) ? $0 : nil } },
+            set: { newValue in
+                if let newValue {
+                    activeSheet = newValue
+                } else if let current = activeSheet, isFullScreenPresentation(current) {
+                    activeSheet = nil
+                }
+            }
+        )
+    }
+
     /// The stored appearance preference (which may be `.system`) resolved
     /// against the device's live system color scheme. Everything in this
     /// view — and everything re-published to descendants below — uses this
@@ -103,7 +146,11 @@ struct ContentView: View {
                     .injectAppearanceMode(store.state.appearanceMode)
             }
         }
-        .sheet(item: $activeSheet) { sheet in
+        .sheet(item: sheetBinding) { sheet in
+            sheetContent(for: sheet)
+                .injectAppearanceMode(store.state.appearanceMode)
+        }
+        .fullScreenCover(item: fullScreenSheetBinding) { sheet in
             sheetContent(for: sheet)
                 .injectAppearanceMode(store.state.appearanceMode)
         }
@@ -143,6 +190,29 @@ struct ContentView: View {
                     .injectAppearanceMode(store.state.appearanceMode)
             }
         }
+        // Day 3 trial offer — fires the moment `checkEngagementMilestones()`
+        // sees 3 consecutive completed days (from `toggleSession`) or on
+        // foreground (`onAppForeground`). `dismissTrialOffer()` marks it seen
+        // either way, whether closed via "Maybe later" or a swipe-down.
+        .fullScreenCover(
+            isPresented: Binding(
+                get: { store.shouldShowTrialOffer },
+                set: { if !$0 { store.dismissTrialOffer() } }
+            )
+        ) {
+            TrialOfferView()
+                .injectAppearanceMode(store.state.appearanceMode)
+        }
+        // Day 30 hard paywall on Scroll II — same trigger/dismiss pattern.
+        .fullScreenCover(
+            isPresented: Binding(
+                get: { store.shouldShowDay30Paywall },
+                set: { if !$0 { store.dismissDay30Paywall() } }
+            )
+        ) {
+            Day30PaywallView()
+                .injectAppearanceMode(store.state.appearanceMode)
+        }
         .alert(
             "Data Recovery",
             isPresented: Binding(
@@ -158,6 +228,11 @@ struct ContentView: View {
         .onAppear {
             store.checkPendingAlarmSession()
             runStartOfDayChecks()
+            // Refreshes cached subscription status (catches trial expiry) and
+            // re-checks the Day 3 / Day 30 triggers against current progress —
+            // covers the case where a threshold was crossed in a previous
+            // session and the reader is only now reopening the app.
+            Task { await store.onAppForeground() }
         }
         .onChange(of: scenePhase) { _, phase in
             if phase == .active {
@@ -170,6 +245,7 @@ struct ContentView: View {
                 // or registered a token yet. This foreground poll is the backstop
                 // that guarantees delivery regardless of push state.
                 Task { await store.refreshPendingShares() }
+                Task { await store.onAppForeground() }
             } else if phase == .inactive || phase == .background {
                 // Persistence is debounced while the app is active; make sure a
                 // pending write lands before we might get suspended or killed.
