@@ -40,8 +40,14 @@ struct LibraryIndexEntry: Identifiable, Codable, Equatable {
     /// is recomputed on every font-size/rotation change), a PDFKit page is
     /// a stable, file-native unit that never moves. Unused for `.epub` books.
     var bookmarkPDFPageIndex: Int = 0
+    /// Whether a cover thumbnail was saved for this book at import time —
+    /// see `LibraryStore.saveCover`/`coverURL`. A book imported before this
+    /// field existed, or one whose source had no extractable cover (an
+    /// EPUB with no declared cover image), decodes/defaults to `false` and
+    /// falls back to a generated placeholder cover in the UI.
+    var hasCover: Bool = false
 
-    init(id: UUID, title: String, author: String?, addedAt: Date, chapterCount: Int, totalParagraphCount: Int, bookmarkChapterIndex: Int = 0, bookmarkScrollFraction: Double? = nil, sourceType: BookSource = .epub, bookmarkPDFPageIndex: Int = 0) {
+    init(id: UUID, title: String, author: String?, addedAt: Date, chapterCount: Int, totalParagraphCount: Int, bookmarkChapterIndex: Int = 0, bookmarkScrollFraction: Double? = nil, sourceType: BookSource = .epub, bookmarkPDFPageIndex: Int = 0, hasCover: Bool = false) {
         self.id = id
         self.title = title
         self.author = author
@@ -52,6 +58,7 @@ struct LibraryIndexEntry: Identifiable, Codable, Equatable {
         self.bookmarkScrollFraction = bookmarkScrollFraction
         self.sourceType = sourceType
         self.bookmarkPDFPageIndex = bookmarkPDFPageIndex
+        self.hasCover = hasCover
     }
 
     // Custom decoding so index entries saved before `sourceType`/
@@ -70,6 +77,7 @@ struct LibraryIndexEntry: Identifiable, Codable, Equatable {
         bookmarkScrollFraction = try container.decodeIfPresent(Double.self, forKey: .bookmarkScrollFraction)
         sourceType = try container.decodeIfPresent(BookSource.self, forKey: .sourceType) ?? .epub
         bookmarkPDFPageIndex = try container.decodeIfPresent(Int.self, forKey: .bookmarkPDFPageIndex) ?? 0
+        hasCover = try container.decodeIfPresent(Bool.self, forKey: .hasCover) ?? false
     }
 }
 
@@ -188,6 +196,10 @@ enum LibraryStore {
         directory.appendingPathComponent("\(id.uuidString).pdf")
     }
 
+    private static func coverFileURL(for id: UUID) -> URL {
+        directory.appendingPathComponent("\(id.uuidString)-cover.jpg")
+    }
+
     /// Copies a PDF's original bytes into the Library's own storage —
     /// called once, at import time (see `AppStore.addBookToLibrary`) — so
     /// the native PDFKit reader always has a stable, sandboxed file to open,
@@ -205,6 +217,23 @@ enum LibraryStore {
     /// reads `Book.chapters` for a `.pdf` book.
     static func pdfURL(for id: UUID) -> URL? {
         let url = pdfFileURL(for: id)
+        return FileManager.default.fileExists(atPath: url.path) ? url : nil
+    }
+
+    /// Saves a book's cover thumbnail (already downscaled by the caller —
+    /// see `PDFImporter.coverThumbnail`/`EPUBParser`'s cover extraction) as
+    /// its own small JPEG file, same as the PDF original above — never
+    /// through `AppState`/`UserDefaults`, so cover art can't bloat that blob.
+    static func saveCover(_ data: Data, for id: UUID) throws {
+        try data.write(to: coverFileURL(for: id), options: .atomic)
+    }
+
+    /// The on-disk location of a book's cover thumbnail, or `nil` if none
+    /// was saved — either the source had no extractable cover, or (for a
+    /// book imported before covers existed) `LibraryIndexEntry.hasCover`
+    /// back-compat-defaults to `false` and this is never even checked.
+    static func coverURL(for id: UUID) -> URL? {
+        let url = coverFileURL(for: id)
         return FileManager.default.fileExists(atPath: url.path) ? url : nil
     }
 
@@ -226,6 +255,7 @@ enum LibraryStore {
     static func delete(_ id: UUID) {
         try? FileManager.default.removeItem(at: fileURL(for: id))
         try? FileManager.default.removeItem(at: pdfFileURL(for: id))
+        try? FileManager.default.removeItem(at: coverFileURL(for: id))
     }
 }
 

@@ -54,6 +54,29 @@ enum PDFImporter {
         throw DocumentImportError.unsupportedFileType
         #endif
     }
+
+    /// Renders the PDF's first page as a small JPEG thumbnail, used as the
+    /// book's cover art on the Library shelf (grid view, cover flow) —
+    /// PDFs carry no separate cover-image metadata the way EPUBs sometimes
+    /// do, so the page itself is the closest thing to a cover. `nil` if the
+    /// PDF can't be opened or has no first page; the Library UI falls back
+    /// to a generated placeholder cover in that case, same as an EPUB with
+    /// no declared cover image.
+    static func coverThumbnail(from url: URL) -> Data? {
+        #if canImport(PDFKit) && canImport(UIKit)
+        guard let document = PDFDocument(url: url), let page = document.page(at: 0) else { return nil }
+        let pageSize = page.bounds(for: .cropBox).size
+        guard pageSize.width > 0, pageSize.height > 0 else { return nil }
+        // Fixed target height, page's own aspect ratio — plenty of detail for
+        // a shelf-sized thumbnail without carrying full page-resolution bytes.
+        let targetHeight: CGFloat = 480
+        let targetWidth = targetHeight * (pageSize.width / pageSize.height)
+        let thumbnail = page.thumbnail(of: CGSize(width: targetWidth, height: targetHeight), for: .cropBox)
+        return thumbnail.jpegData(compressionQuality: 0.75)
+        #else
+        return nil
+        #endif
+    }
 }
 
 // MARK: - EPUB
@@ -74,7 +97,7 @@ enum EPUBParser {
     /// into a WKWebView later without a custom URL scheme handler or a
     /// network round-trip. `text` is unchanged from before: the same
     /// blank-line-joined paragraphs every other reading/import path expects.
-    static func extractChapters(from url: URL) throws -> (bookTitle: String?, chapters: [(title: String?, html: String, text: String)]) {
+    static func extractChapters(from url: URL) throws -> (bookTitle: String?, chapters: [(title: String?, html: String, text: String)], coverImageData: Data?) {
         let data = try Data(contentsOf: url)
         let zip = try MinimalZip(data: data)
 
@@ -126,7 +149,41 @@ enum EPUBParser {
         guard !chapters.isEmpty else {
             throw DocumentImportError.unreadable("No readable chapters were found in this EPUB.")
         }
-        return (bookTitle, chapters)
+        let coverImageData = extractCoverImage(opf: opfDelegate, zip: zip, opfBase: opfBase)
+        return (bookTitle, chapters, coverImageData)
+    }
+
+    /// Finds and downscales the EPUB's declared cover image, for the
+    /// Library shelf's grid view/cover flow. Two conventions are checked,
+    /// in order:
+    /// - EPUB3: a manifest `<item>` whose `properties` includes
+    ///   `cover-image`.
+    /// - EPUB2: `<metadata><meta name="cover" content="ID"/>`, where `ID`
+    ///   is a manifest item id (the older, still widely-used convention).
+    ///
+    /// `nil` if neither is present, or the referenced image can't be read —
+    /// the Library UI falls back to a generated placeholder cover in that
+    /// case, same as it does for PDFs it couldn't render a thumbnail for.
+    private static func extractCoverImage(opf: OPFDelegate, zip: MinimalZip, opfBase: String) -> Data? {
+        let coverItemId = opf.manifestProperties.first(where: { $0.value.split(separator: " ").contains("cover-image") })?.key
+            ?? opf.coverContentId
+        guard let itemId = coverItemId, let href = opf.manifest[itemId] else { return nil }
+        let path = opfBase.isEmpty ? href : "\(opfBase)/\(href)"
+        guard let data = try? zip.contents(of: path) else { return nil }
+        #if canImport(UIKit)
+        // Downscale to a shelf-sized thumbnail so cover art doesn't carry
+        // full publisher-resolution image bytes into app storage — mirrors
+        // `PDFImporter.coverThumbnail`'s fixed target height.
+        guard let image = UIImage(data: data), image.size.height > 0 else { return nil }
+        let targetHeight: CGFloat = 480
+        let scale = targetHeight / image.size.height
+        let targetSize = CGSize(width: image.size.width * scale, height: targetHeight)
+        let renderer = UIGraphicsImageRenderer(size: targetSize)
+        let resized = renderer.image { _ in image.draw(in: CGRect(origin: .zero, size: targetSize)) }
+        return resized.jpegData(compressionQuality: 0.8)
+        #else
+        return data
+        #endif
     }
 
     /// Many EPUBs (this one included) mark a chapter's heading with two
@@ -328,6 +385,14 @@ private final class ContainerXMLDelegate: NSObject, XMLParserDelegate {
 
 private final class OPFDelegate: NSObject, XMLParserDelegate {
     var manifest: [String: String] = [:] // item id -> href
+    /// item id -> its `properties` attribute, space-separated (EPUB3) — used
+    /// to find the manifest item marked `cover-image`. See
+    /// `EPUBParser.extractCoverImage`.
+    var manifestProperties: [String: String] = [:]
+    /// The manifest item id referenced by `<meta name="cover" content="ID">`
+    /// (the EPUB2 cover convention) — a fallback for `manifestProperties`
+    /// when the EPUB predates or doesn't use the EPUB3 `properties` attribute.
+    var coverContentId: String?
     var spine: [String] = []             // ordered idrefs
     /// The book's title, from <metadata><dc:title>. Only the first such
     /// element is kept — some OPFs list additional title-type metadata
@@ -342,7 +407,12 @@ private final class OPFDelegate: NSObject, XMLParserDelegate {
         if elementName.hasSuffix("itemref") {
             if let idref = attributeDict["idref"] { spine.append(idref) }
         } else if elementName.hasSuffix("item") {
-            if let id = attributeDict["id"], let href = attributeDict["href"] { manifest[id] = href }
+            if let id = attributeDict["id"], let href = attributeDict["href"] {
+                manifest[id] = href
+                if let properties = attributeDict["properties"] { manifestProperties[id] = properties }
+            }
+        } else if elementName.hasSuffix("meta"), attributeDict["name"] == "cover", let content = attributeDict["content"] {
+            coverContentId = content
         } else if title == nil, elementName == "title" || elementName.hasSuffix(":title") {
             isInTitle = true
             titleBuffer = ""

@@ -165,9 +165,10 @@ struct ContentView: View {
                 store.checkPendingAlarmSession()
                 store.syncNotifications()
                 runStartOfDayChecks()
-                // Shared scrolls have no push notification (unlike cheers), so
-                // foregrounding the app is the only reliable moment to pick up
-                // shares that arrived while this session was already running.
+                // Shares do get a push (trg_share_push -> send-share-push), but
+                // it's best-effort: the recipient may not have granted permission
+                // or registered a token yet. This foreground poll is the backstop
+                // that guarantees delivery regardless of push state.
                 Task { await store.refreshPendingShares() }
             } else if phase == .inactive || phase == .background {
                 // Persistence is debounced while the app is active; make sure a

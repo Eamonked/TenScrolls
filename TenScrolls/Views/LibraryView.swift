@@ -3,6 +3,35 @@ import SwiftUI
 import UIKit
 #endif
 
+/// Which layout the shelf is currently browsed in. Persisted locally (not
+/// through `AppState`) since it's a display preference, not reading data —
+/// no reason for it to ride along in the synced/backed-up app state blob.
+private enum LibraryViewMode: String {
+    case list
+    case grid
+}
+
+/// Context menu content shared by every place a book can be long-pressed —
+/// the list row, a grid cell, and a cover-flow card — so "Share" / "Remove"
+/// stay in one place instead of three copies drifting apart.
+@ViewBuilder
+private func libraryContextMenuItems(
+    for entry: LibraryIndexEntry,
+    onShare: @escaping (LibraryIndexEntry) -> Void,
+    onDelete: @escaping (LibraryIndexEntry) -> Void
+) -> some View {
+    Button {
+        onShare(entry)
+    } label: {
+        Label("Share what I'm reading", systemImage: "square.and.arrow.up")
+    }
+    Button(role: .destructive) {
+        onDelete(entry)
+    } label: {
+        Label("Remove Book", systemImage: "trash")
+    }
+}
+
 /// The library shelf: full-length books imported outside the ten scrolls,
 /// for reading alongside the daily practice rather than as part of it.
 /// Only ever works with `LibraryIndexEntry` metadata here — the actual text
@@ -13,10 +42,15 @@ struct LibraryView: View {
     @Environment(\.appearanceMode) var appearanceMode
     @State private var showImport = false
     @State private var pendingDelete: LibraryIndexEntry?
+    @AppStorage("tenscrolls.libraryViewMode") private var viewModeRaw: String = LibraryViewMode.grid.rawValue
     #if canImport(UIKit)
     @State private var shareImage: UIImage?
     @State private var showShare = false
     #endif
+
+    private var viewMode: LibraryViewMode {
+        get { LibraryViewMode(rawValue: viewModeRaw) ?? .grid }
+    }
 
     var theme: ThemeOption { Palette.theme(for: store.state.activeThemeId) }
 
@@ -40,27 +74,36 @@ struct LibraryView: View {
                     if books.isEmpty {
                         emptyState(colors)
                     } else {
-                        ForEach(books) { entry in
-                            NavigationLink {
-                                LibraryReaderView(bookId: entry.id, fallbackTitle: entry.title)
-                            } label: {
-                                BookRow(entry: entry, theme: theme, colors: colors)
-                            }
-                            .buttonStyle(.plain)
-                            .contextMenu {
-                                #if canImport(UIKit)
-                                Button {
-                                    shareBook(entry)
-                                } label: {
-                                    Label("Share what I'm reading", systemImage: "square.and.arrow.up")
+                        // A quick, flip-through way to recognize a book by its
+                        // cover before committing to the fuller list/grid below.
+                        CoverFlowView(
+                            books: books, theme: theme, colors: colors,
+                            onShare: shareBook, onDelete: { pendingDelete = $0 }
+                        )
+                        .padding(.bottom, 2)
+
+                        viewModeToggle(colors)
+
+                        switch viewMode {
+                        case .list:
+                            VStack(spacing: 10) {
+                                ForEach(books) { entry in
+                                    NavigationLink {
+                                        LibraryReaderView(bookId: entry.id, fallbackTitle: entry.title)
+                                    } label: {
+                                        BookRow(entry: entry, theme: theme, colors: colors)
+                                    }
+                                    .buttonStyle(.plain)
+                                    .contextMenu {
+                                        libraryContextMenuItems(for: entry, onShare: shareBook, onDelete: { pendingDelete = $0 })
+                                    }
                                 }
-                                #endif
-                                Button(role: .destructive) {
-                                    pendingDelete = entry
-                                } label: {
-                                    Label("Remove Book", systemImage: "trash")
-                                }
                             }
+                        case .grid:
+                            BookGridView(
+                                books: books, theme: theme, colors: colors,
+                                onShare: shareBook, onDelete: { pendingDelete = $0 }
+                            )
                         }
                     }
 
@@ -108,6 +151,21 @@ struct LibraryView: View {
         }
     }
 
+    private func viewModeToggle(_ colors: AdaptivePalette) -> some View {
+        HStack {
+            Spacer()
+            Picker("Layout", selection: Binding(
+                get: { viewMode },
+                set: { viewModeRaw = $0.rawValue }
+            )) {
+                Image(systemName: "list.bullet").tag(LibraryViewMode.list)
+                Image(systemName: "square.grid.2x2").tag(LibraryViewMode.grid)
+            }
+            .pickerStyle(.segmented)
+            .frame(width: 96)
+        }
+    }
+
     #if canImport(UIKit)
     private func shareBook(_ entry: LibraryIndexEntry) {
         let subject: ReadingShareSubject
@@ -133,6 +191,8 @@ struct LibraryView: View {
         shareImage = NowReadingCard.renderImage(subject: subject, traderName: store.state.traderName, theme: theme)
         showShare = shareImage != nil
     }
+    #else
+    private func shareBook(_ entry: LibraryIndexEntry) {}
     #endif
 
     private func emptyState(_ colors: AdaptivePalette) -> some View {
@@ -155,6 +215,203 @@ struct LibraryView: View {
         .clipShape(RoundedRectangle(cornerRadius: 16))
     }
 }
+
+// MARK: - Cover flow
+
+/// A horizontal, center-weighted carousel of book covers — a lightweight
+/// take on the classic "cover flow" browsing pattern: covers scale up and
+/// square on as they approach center, and recede/tilt away to either side,
+/// so a book can be picked out by its cover alone rather than its title
+/// text. Tapping a card opens that book; long-press gets the same
+/// share/remove menu as the list and grid.
+private struct CoverFlowView: View {
+    let books: [LibraryIndexEntry]
+    let theme: ThemeOption
+    let colors: AdaptivePalette
+    let onShare: (LibraryIndexEntry) -> Void
+    let onDelete: (LibraryIndexEntry) -> Void
+
+    // Tracked via `onScrollGeometryChange` below rather than a per-card
+    // `GeometryReader` reading `.global` frames on every scroll frame —
+    // that pattern is fragile under fast scrolling (nested geometry reads
+    // recomputing live transforms during layout) and was producing
+    // "Modifying state during view update" faults and a Metal draw-
+    // validation crash. `onScrollGeometryChange`'s `action` closure runs
+    // outside the render pass, same as `.onChange`, so it's safe to write
+    // to `@State` from.
+    @State private var scrollOffsetX: CGFloat = 0
+
+    private let cardWidth: CGFloat = 108
+    private let cardHeight: CGFloat = 152
+    private let cardSpacing: CGFloat = 22
+    private var stride: CGFloat { cardWidth + cardSpacing }
+
+    var body: some View {
+        GeometryReader { outer in
+            let viewportWidth = outer.size.width
+            let sidePadding = max(0, (viewportWidth - cardWidth) / 2)
+            let viewportCenter = scrollOffsetX + viewportWidth / 2
+
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: cardSpacing) {
+                    ForEach(Array(books.enumerated()), id: \.element.id) { index, entry in
+                        // Distance of this card's center from the carousel's
+                        // own center, in card-widths — pure arithmetic from
+                        // the card's known position and the tracked scroll
+                        // offset, never a live per-card geometry read.
+                        let cardCenter = sidePadding + CGFloat(index) * stride + cardWidth / 2
+                        let clamped = max(-2.5, min(2.5, (cardCenter - viewportCenter) / stride))
+
+                        NavigationLink {
+                            LibraryReaderView(bookId: entry.id, fallbackTitle: entry.title)
+                        } label: {
+                            BookCoverView(entry: entry, theme: theme, colors: colors, cornerRadius: 6)
+                                .frame(width: cardWidth, height: cardHeight)
+                                .shadow(color: .black.opacity(0.35), radius: 8, x: 0, y: 6)
+                        }
+                        .buttonStyle(.plain)
+                        .contextMenu {
+                            libraryContextMenuItems(for: entry, onShare: onShare, onDelete: onDelete)
+                        }
+                        .rotation3DEffect(
+                            .degrees(Double(clamped) * -50),
+                            axis: (x: 0, y: 1, z: 0),
+                            anchor: .center,
+                            perspective: 0.55
+                        )
+                        .scaleEffect(1 - min(0.24, abs(clamped) * 0.18))
+                        .offset(x: -clamped * 16)
+                        .zIndex(1 - Double(abs(clamped)))
+                    }
+                }
+                .scrollTargetLayout()
+                .padding(.horizontal, sidePadding)
+            }
+            .scrollTargetBehavior(.viewAligned)
+            .onScrollGeometryChange(for: CGFloat.self) { geometry in
+                geometry.contentOffset.x
+            } action: { _, newValue in
+                scrollOffsetX = newValue
+            }
+        }
+        .frame(height: cardHeight + 30)
+    }
+}
+
+// MARK: - Grid
+
+/// The shelf as a grid of covers — same books as the list, laid out for
+/// scanning by cover art rather than reading titles top to bottom.
+private struct BookGridView: View {
+    let books: [LibraryIndexEntry]
+    let theme: ThemeOption
+    let colors: AdaptivePalette
+    let onShare: (LibraryIndexEntry) -> Void
+    let onDelete: (LibraryIndexEntry) -> Void
+
+    private let columns = [GridItem(.adaptive(minimum: 96, maximum: 130), spacing: 16)]
+
+    var body: some View {
+        LazyVGrid(columns: columns, spacing: 20) {
+            ForEach(books) { entry in
+                NavigationLink {
+                    LibraryReaderView(bookId: entry.id, fallbackTitle: entry.title)
+                } label: {
+                    VStack(spacing: 6) {
+                        BookCoverView(entry: entry, theme: theme, colors: colors)
+                            .aspectRatio(2.0 / 3.0, contentMode: .fit)
+                            .shadow(color: .black.opacity(0.25), radius: 5, x: 0, y: 3)
+                        Text(entry.title)
+                            .font(.system(size: 11.5, weight: .medium))
+                            .foregroundColor(colors.text)
+                            .lineLimit(2)
+                            .multilineTextAlignment(.center)
+                    }
+                }
+                .buttonStyle(.plain)
+                .contextMenu {
+                    libraryContextMenuItems(for: entry, onShare: onShare, onDelete: onDelete)
+                }
+            }
+        }
+    }
+}
+
+// MARK: - Cover art
+
+/// A book's cover thumbnail, loaded from disk when one was saved at import
+/// time (see `LibraryStore.coverURL`), or a generated placeholder card
+/// (title, source-type icon, brass accent) when it wasn't — an EPUB with no
+/// declared cover image, a PDF whose first page couldn't be rendered, or a
+/// book imported before cover extraction existed. Used by the list row, the
+/// grid, and the cover-flow carousel, so every view of the shelf shows the
+/// same art.
+private struct BookCoverView: View {
+    let entry: LibraryIndexEntry
+    let theme: ThemeOption
+    let colors: AdaptivePalette
+    var cornerRadius: CGFloat = 8
+
+    #if canImport(UIKit)
+    @State private var image: UIImage?
+    #endif
+
+    var body: some View {
+        ZStack {
+            #if canImport(UIKit)
+            if let image {
+                Image(uiImage: image)
+                    .resizable()
+                    .aspectRatio(contentMode: .fill)
+            } else {
+                placeholder
+            }
+            #else
+            placeholder
+            #endif
+        }
+        .clipShape(RoundedRectangle(cornerRadius: cornerRadius))
+        .overlay(RoundedRectangle(cornerRadius: cornerRadius).stroke(colors.inkLine, lineWidth: 1))
+        #if canImport(UIKit)
+        .task(id: entry.id) { await loadCover() }
+        #endif
+    }
+
+    private var placeholder: some View {
+        ZStack {
+            LinearGradient(
+                colors: [theme.brassDim.opacity(0.4), colors.ink2],
+                startPoint: .topLeading, endPoint: .bottomTrailing
+            )
+            VStack(spacing: 6) {
+                Image(systemName: entry.sourceType == .pdf ? "doc.richtext" : "book.closed")
+                    .font(.system(size: 20))
+                    .foregroundColor(theme.brass)
+                Text(entry.title)
+                    .font(AppFont.display(11.5))
+                    .foregroundColor(colors.text)
+                    .multilineTextAlignment(.center)
+                    .lineLimit(4)
+                    .padding(.horizontal, 6)
+            }
+        }
+    }
+
+    #if canImport(UIKit)
+    private func loadCover() async {
+        guard entry.hasCover, image == nil else { return }
+        let id = entry.id
+        let loaded = await Task.detached(priority: .utility) { () -> UIImage? in
+            guard let url = LibraryStore.coverURL(for: id), let data = try? Data(contentsOf: url) else { return nil }
+            return UIImage(data: data)
+        }.value
+        guard !Task.isCancelled else { return }
+        image = loaded
+    }
+    #endif
+}
+
+// MARK: - List row
 
 private struct BookRow: View {
     let entry: LibraryIndexEntry
@@ -182,15 +439,8 @@ private struct BookRow: View {
 
     var body: some View {
         HStack(spacing: 13) {
-            ZStack {
-                Circle()
-                    .fill(colors.ink2)
-                    .overlay(Circle().stroke(colors.inkLine, lineWidth: 1.5))
-                    .frame(width: 42, height: 42)
-                Image(systemName: "book.closed")
-                    .font(.system(size: 15))
-                    .foregroundColor(theme.brass)
-            }
+            BookCoverView(entry: entry, theme: theme, colors: colors, cornerRadius: 6)
+                .frame(width: 40, height: 54)
             VStack(alignment: .leading, spacing: 2) {
                 Text(entry.title)
                     .font(.system(size: 14.5, weight: .semibold)).foregroundColor(colors.text)

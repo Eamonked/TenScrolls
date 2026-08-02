@@ -615,12 +615,19 @@ final class AppStore: ObservableObject {
     /// stored as before (see `Documentimportsheet`), but only as a fallback
     /// text layer — the actual reading experience never flattens the PDF
     /// the way the old text-reflow pipeline did.
-    func addBookToLibrary(filename: String, chunks: [String], titles: [String?], html: [String]? = nil, bookTitle: String? = nil, pdfData: Data? = nil) throws {
+    func addBookToLibrary(filename: String, chunks: [String], titles: [String?], html: [String]? = nil, bookTitle: String? = nil, pdfData: Data? = nil, coverData: Data? = nil) throws {
         let sourceType: BookSource = pdfData != nil ? .pdf : .epub
-        let (book, index) = Book.from(filename: filename, chunks: chunks, titles: titles, html: html, bookTitle: bookTitle, sourceType: sourceType)
+        let (book, builtIndex) = Book.from(filename: filename, chunks: chunks, titles: titles, html: html, bookTitle: bookTitle, sourceType: sourceType)
         try LibraryStore.save(book)
         if let pdfData {
             try LibraryStore.savePDF(pdfData, for: book.id)
+        }
+        var index = builtIndex
+        // Best-effort: a cover thumbnail is a nice-to-have for identifying
+        // the book on the shelf, not something worth failing the whole
+        // import over if the write happens to fail.
+        if let coverData, (try? LibraryStore.saveCover(coverData, for: book.id)) != nil {
+            index.hasCover = true
         }
         state.libraryBooks.append(index)
         afterMutation()

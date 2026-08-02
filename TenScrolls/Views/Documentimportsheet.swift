@@ -32,6 +32,11 @@ struct DocumentImportSheet: View {
         /// destinations (which are just plain-text scroll notes and have no
         /// reader of their own to be native about).
         let pdfData: Data?
+        /// A small downscaled cover thumbnail — the EPUB's declared cover
+        /// image, or a render of a PDF's first page — used as the book's
+        /// cover art on the Library shelf. `nil` if no cover could be
+        /// extracted; the Library falls back to a generated placeholder.
+        let coverData: Data?
     }
 
     private enum Stage {
@@ -258,18 +263,21 @@ struct DocumentImportSheet: View {
                 var html: [String]? = nil
                 var bookTitle: String? = nil
                 var pdfData: Data? = nil
+                var coverData: Data? = nil
                 if ext == "epub" {
                     let parsed = try EPUBParser.extractChapters(from: url)
                     bookTitle = parsed.bookTitle
                     chunks = parsed.chapters.map { $0.text }
                     titles = parsed.chapters.map { $0.title }
                     html = parsed.chapters.map { $0.html }
+                    coverData = parsed.coverImageData
                 } else {
                     chunks = try PDFImporter.extractPages(from: url)
                     titles = Array(repeating: nil, count: chunks.count)
                     pdfData = try Data(contentsOf: url)
+                    coverData = PDFImporter.coverThumbnail(from: url)
                 }
-                let doc = ParsedDocument(filename: url.lastPathComponent, bookTitle: bookTitle, chunks: chunks, titles: titles, html: html, pdfData: pdfData)
+                let doc = ParsedDocument(filename: url.lastPathComponent, bookTitle: bookTitle, chunks: chunks, titles: titles, html: html, pdfData: pdfData, coverData: coverData)
                 await MainActor.run { stage = .configure(doc) }
             } catch {
                 let message = (error as? LocalizedError)?.errorDescription ?? "This file couldn't be read."
@@ -296,7 +304,7 @@ struct DocumentImportSheet: View {
             dismiss()
         case .library:
             do {
-                try store.addBookToLibrary(filename: doc.filename, chunks: doc.chunks, titles: doc.titles, html: doc.html, bookTitle: doc.bookTitle, pdfData: doc.pdfData)
+                try store.addBookToLibrary(filename: doc.filename, chunks: doc.chunks, titles: doc.titles, html: doc.html, bookTitle: doc.bookTitle, pdfData: doc.pdfData, coverData: doc.coverData)
                 dismiss()
             } catch {
                 importError = (error as? LocalizedError)?.errorDescription ?? "Something went wrong saving this book."
