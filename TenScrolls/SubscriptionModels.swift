@@ -70,14 +70,22 @@ struct TrialStartResult: Decodable {
     }
 }
 
-/// Result from activating subscription
+/// Result from activating subscription (via the `verify-purchase` Edge
+/// Function, not a direct RPC — see `SupabaseSubscription.activateSubscription`).
+/// `error`/`message` are populated when `success` is false, e.g. StoreKit
+/// signature verification failed, the product ID didn't match, or this
+/// transaction is already bound to a different account.
 struct SubscriptionActivationResult: Decodable {
     let success: Bool
     let plusSince: Date?
-    
+    let error: String?
+    let message: String?
+
     private enum CodingKeys: String, CodingKey {
         case success
         case plusSince = "plus_since"
+        case error
+        case message
     }
 }
 
@@ -91,6 +99,25 @@ struct TrialExpiryCheckResult: Decodable {
     private enum CodingKeys: String, CodingKey {
         case success
         case expired
+        case newStatus = "new_status"
+        case status
+    }
+}
+
+/// Result from `deactivate_subscription` — the reconciliation counterpart to
+/// `SubscriptionActivationResult`. `changed` is true only when an `active`
+/// subscriber was actually flipped to `lapsed`; false covers both "already
+/// wasn't active" and "call didn't need to do anything", neither of which is
+/// an error.
+struct SubscriptionDeactivationResult: Decodable {
+    let success: Bool
+    let changed: Bool
+    let newStatus: String?
+    let status: String?
+
+    private enum CodingKeys: String, CodingKey {
+        case success
+        case changed
         case newStatus = "new_status"
         case status
     }

@@ -16,7 +16,12 @@ struct CaravanView: View {
     @State private var friendError = ""
     @State private var copied = false
 
-    @State private var leaderboard: [LeaderboardEntry]? = nil
+    /// Raw rows from the tiered RPC. For Plus users this is the full ranked
+    /// list (one row per trader); for free/lapsed users it's a single locked
+    /// row carrying only this device's own percentile/population — the
+    /// server decides which shape comes back based on subscription status,
+    /// this view just renders whichever it received. See `fullBoard` below.
+    @State private var tieredEntries: [TieredLeaderboardEntry]? = nil
     @State private var loadError = false
     @State private var friendData: [String: FriendSnapshot] = [:]
     @State private var cheersReceived = 0
@@ -36,11 +41,31 @@ struct CaravanView: View {
     var myStreak: Int { store.state.currentStreak }
     var myLevel: Int { store.state.levelInfo().level }
 
-    var sortedBoard: [LeaderboardEntry]? {
-        leaderboard?.sorted { $0.snapshot.xp > $1.snapshot.xp }
+    /// Only meaningful for Plus users — the unlocked rows from `tieredEntries`,
+    /// already ranked server-side (`get_leaderboard_tiered` orders by XP), so
+    /// no client-side re-sort is needed. Free/lapsed users get a single
+    /// `is_locked` row, which maps to an empty board here since there's
+    /// nothing to list — see `partialRevealCard` for their view instead.
+    var fullBoard: [LeaderboardEntry]? {
+        tieredEntries?.compactMap { row -> LeaderboardEntry? in
+            guard !row.isLocked,
+                  let code = row.traderCode, let name = row.traderName,
+                  let level = row.level, let xp = row.xp,
+                  let streak = row.currentStreak, let bestStreak = row.bestStreak,
+                  let totalDays = row.totalDays, let mastered = row.scrollsMastered,
+                  let lastActive = row.lastActive else { return nil }
+            return LeaderboardEntry(code: code, snapshot: FriendSnapshot(
+                name: name, level: level, xp: xp, streak: streak, bestStreak: bestStreak,
+                totalDays: totalDays, mastered: mastered, lastActive: lastActive))
+        }
     }
     var myRankIndex: Int? {
-        sortedBoard?.firstIndex(where: { $0.code == store.state.traderCode })
+        fullBoard?.firstIndex(where: { $0.code == store.state.traderCode })
+    }
+    /// The locked row for a free/lapsed user — carries just this device's own
+    /// percentile and the population count, nothing about anyone else.
+    var lockedSelfEntry: TieredLeaderboardEntry? {
+        tieredEntries?.first(where: { $0.isLocked })
     }
     /// Deep link opened by `AppStore.handleIncomingURL` on the recipient's
     /// device, pre-filling their add-friend field with this trader's code.
@@ -85,6 +110,7 @@ struct CaravanView: View {
         .onAppear {
             if store.state.traderName.isEmpty { editingName = true }
             consumePendingFriendCode()
+            consumePendingGroupCode()
             // Belt-and-suspenders: catches shares/cheers that arrived while
             // this tab was already loaded and the user just switched back
             // to it, since the .task(id:) above won't refire for that case.
@@ -95,6 +121,9 @@ struct CaravanView: View {
         }
         .onChange(of: store.pendingFriendCode) { _, _ in
             consumePendingFriendCode()
+        }
+        .onChange(of: store.pendingGroupCode) { _, _ in
+            consumePendingGroupCode()
         }
         #if canImport(UIKit)
         .sheet(isPresented: $showStreakShare) {
@@ -198,6 +227,16 @@ struct CaravanView: View {
         friendInput = code
         submitFriend()
         store.pendingFriendCode = nil
+    }
+
+    /// Prefills the join-group field from an opened
+    /// `tenscrolls://joingroup?code=...` link and fires the join, then clears
+    /// the pending code so it isn't re-applied on the next appearance.
+    private func consumePendingGroupCode() {
+        guard let code = store.pendingGroupCode else { return }
+        groupCodeDraft = code
+        store.pendingGroupCode = nil
+        Task { await submitJoinGroup() }
     }
 
     // MARK: - Identity
@@ -308,33 +347,50 @@ struct CaravanView: View {
 
     // MARK: - Add friend
 
+    /// Growing your circle is a Plus perk — the strategy doc's "View Only"
+    /// Caravan rule for free/lapsed users. Existing friends stay fully visible
+    /// (see `duelsSection`); this only gates *adding new ones*.
     private var addFriendCard: some View {
         let colors = AdaptivePalette(mode: appearanceMode)
         return VStack(alignment: .leading, spacing: 0) {
             SectionLabel(text: "Add a Friend")
-            CardView {
-                HStack(spacing: 8) {
-                    TextField("Enter their trader code…", text: $friendInput)
-                        .textFieldStyle(AppTextFieldStyle())
-                        #if os(iOS)
-                        .textInputAutocapitalization(.characters)
-                        #endif
-                        .onSubmit(submitFriend)
-                    Button(action: submitFriend) {
-                        Image(systemName: "person.badge.plus")
+            if store.state.hasPlusAccess {
+                CardView {
+                    HStack(spacing: 8) {
+                        TextField("Enter their trader code…", text: $friendInput)
+                            .textFieldStyle(AppTextFieldStyle())
+                            #if os(iOS)
+                            .textInputAutocapitalization(.characters)
+                            #endif
+                            .onSubmit(submitFriend)
+                        Button(action: submitFriend) {
+                            Image(systemName: "person.badge.plus")
+                        }
+                        .frame(width: 40, height: 40)
+                        .background(colors.ink3)
+                        .foregroundColor(theme.brass)
+                        .overlay(RoundedRectangle(cornerRadius: 10).stroke(colors.inkLine, lineWidth: 1))
+                        .clipShape(RoundedRectangle(cornerRadius: 10))
                     }
-                    .frame(width: 40, height: 40)
-                    .background(colors.ink3)
-                    .foregroundColor(theme.brass)
-                    .overlay(RoundedRectangle(cornerRadius: 10).stroke(colors.inkLine, lineWidth: 1))
-                    .clipShape(RoundedRectangle(cornerRadius: 10))
+                    if !friendError.isEmpty {
+                        Text(friendError).font(AppFont.mono(11)).foregroundColor(colors.red).padding(.top, 8)
+                    }
+                    Text("Share your own code above so they can add you back.")
+                        .font(AppFont.mono(11)).foregroundColor(colors.textFaint)
+                        .padding(.top, friendError.isEmpty ? 8 : 4)
                 }
-                if !friendError.isEmpty {
-                    Text(friendError).font(AppFont.mono(11)).foregroundColor(colors.red).padding(.top, 8)
+            } else {
+                CardView {
+                    HStack(spacing: 10) {
+                        Image(systemName: "lock.fill").font(.system(size: 13)).foregroundColor(colors.textFaint)
+                        Text("Adding new traders is a Plus feature.")
+                            .font(.system(size: 12.5)).foregroundColor(colors.textDim)
+                        Spacer()
+                        Button("Upgrade") { store.shouldShowDay30Paywall = true }
+                            .font(.system(size: 12.5, weight: .semibold))
+                            .foregroundColor(theme.brass)
+                    }
                 }
-                Text("Share your own code above so they can add you back.")
-                    .font(AppFont.mono(11)).foregroundColor(colors.textFaint)
-                    .padding(.top, friendError.isEmpty ? 8 : 4)
             }
         }
     }
@@ -368,8 +424,10 @@ struct CaravanView: View {
                         theme: theme,
                         cheerSent: sentLocallyToday || ackSentToday,
                         cheerSeen: ackSentToday && (ack?.acknowledged ?? false),
+                        hasPlusAccess: store.state.hasPlusAccess,
                         onRemove: { store.removeFriend(code) },
-                        onCheer: { await sendCheer(code) }
+                        onCheer: { await sendCheer(code) },
+                        onUpgrade: { store.shouldShowDay30Paywall = true }
                     )
                 }
             }
@@ -381,43 +439,148 @@ struct CaravanView: View {
     private var readingGroupsSection: some View {
         let colors = AdaptivePalette(mode: appearanceMode)
         return VStack(alignment: .leading, spacing: 0) {
-            SectionLabel(text: "Reading Groups")
+            SectionLabel(text: "Reading Groups", trailing: store.myReadingGroups.isEmpty ? nil : "\(store.myReadingGroups.count) group\(store.myReadingGroups.count == 1 ? "" : "s")")
             CardView {
-                if store.myReadingGroups.isEmpty {
-                    EmptyState(text: "No reading groups yet. Create or join a group to read together with friends.")
-                } else {
-                    VStack(spacing: 8) {
-                        ForEach(store.myReadingGroups) { group in
-                            ReadingGroupRow(group: group, theme: theme)
+                VStack(alignment: .leading, spacing: 12) {
+                    // Existing groups list
+                    if !store.myReadingGroups.isEmpty {
+                        VStack(spacing: 0) {
+                            ForEach(Array(store.myReadingGroups.enumerated()), id: \.element.id) { idx, group in
+                                if idx > 0 { Divider().overlay(colors.inkLine) }
+                                ReadingGroupRow(group: group, theme: theme)
+                            }
                         }
+                        Divider().overlay(colors.inkLine).padding(.top, 4)
+                    }
+
+                    // Create group
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("Create a group".uppercased())
+                            .font(AppFont.mono(10)).tracking(1.2).foregroundColor(colors.textFaint)
+                        HStack(spacing: 8) {
+                            TextField("Group name…", text: $groupNameDraft)
+                                .textFieldStyle(AppTextFieldStyle())
+                                .onSubmit { Task { await submitCreateGroup() } }
+                            Button { Task { await submitCreateGroup() } } label: {
+                                Image(systemName: "plus")
+                            }
+                            .frame(width: 40, height: 40)
+                            .background(colors.ink3)
+                            .foregroundColor(theme.brass)
+                            .overlay(RoundedRectangle(cornerRadius: 10).stroke(colors.inkLine, lineWidth: 1))
+                            .clipShape(RoundedRectangle(cornerRadius: 10))
+                        }
+                    }
+
+                    // Join group
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("Join a group".uppercased())
+                            .font(AppFont.mono(10)).tracking(1.2).foregroundColor(colors.textFaint)
+                        HStack(spacing: 8) {
+                            TextField("Enter group code…", text: $groupCodeDraft)
+                                .textFieldStyle(AppTextFieldStyle())
+                                #if os(iOS)
+                                .textInputAutocapitalization(.characters)
+                                #endif
+                                .onSubmit { Task { await submitJoinGroup() } }
+                            Button { Task { await submitJoinGroup() } } label: {
+                                Image(systemName: "arrow.right")
+                            }
+                            .frame(width: 40, height: 40)
+                            .background(colors.ink3)
+                            .foregroundColor(theme.brass)
+                            .overlay(RoundedRectangle(cornerRadius: 10).stroke(colors.inkLine, lineWidth: 1))
+                            .clipShape(RoundedRectangle(cornerRadius: 10))
+                        }
+                    }
+
+                    // Feedback message
+                    if let msg = groupMessage {
+                        Text(msg)
+                            .font(AppFont.mono(11))
+                            .foregroundColor(groupMessageIsError ? colors.red : colors.green)
+                            .padding(.top, 2)
                     }
                 }
             }
         }
     }
 
+    private func submitCreateGroup() async {
+        let result = await store.createReadingGroup(name: groupNameDraft)
+        switch result {
+        case .success(let msg):
+            groupNameDraft = ""
+            groupMessage = msg
+            groupMessageIsError = false
+        case .failure(let msg):
+            groupMessage = msg
+            groupMessageIsError = true
+        }
+        clearGroupMessageAfterDelay()
+    }
+
+    private func submitJoinGroup() async {
+        let result = await store.joinReadingGroup(code: groupCodeDraft)
+        switch result {
+        case .success(let msg):
+            groupCodeDraft = ""
+            groupMessage = msg
+            groupMessageIsError = false
+        case .failure(let msg):
+            groupMessage = msg
+            groupMessageIsError = true
+        }
+        clearGroupMessageAfterDelay()
+    }
+
+    private func clearGroupMessageAfterDelay() {
+        Task {
+            try? await Task.sleep(nanoseconds: 3_000_000_000)
+            groupMessage = nil
+        }
+    }
+
     // MARK: - Leaderboard
 
+    /// Branches entirely on whether Plus rows came back from the server —
+    /// this is presentation only, not the gate itself. The actual withholding
+    /// already happened server-side in `get_leaderboard_tiered` (a free/lapsed
+    /// caller never receives other traders' rows at all), so there's nothing
+    /// for this view to "hide"; it just renders whichever shape it got.
     private var leaderboardSection: some View {
         let colors = AdaptivePalette(mode: appearanceMode)
         return VStack(alignment: .leading, spacing: 0) {
-            SectionLabel(text: "Leaderboard", trailing: sortedBoard.map { "\($0.count) traders" })
-            CardView {
-                if sortedBoard == nil {
-                    EmptyState(text: "Loading the caravan…")
-                } else if loadError {
-                    EmptyState(text: "Couldn't reach the shared board right now. Try again shortly.")
-                } else if sortedBoard!.isEmpty {
-                    EmptyState(text: "No traders on the board yet. Set your handle above to be first.")
-                } else {
-                    VStack(spacing: 0) {
-                        ForEach(Array(sortedBoard!.prefix(20).enumerated()), id: \.element.id) { idx, entry in
-                            LeaderRow(rank: idx, entry: entry, isSelf: entry.code == store.state.traderCode, theme: theme)
+            if tieredEntries == nil {
+                SectionLabel(text: "Leaderboard")
+                CardView { EmptyState(text: "Loading the caravan…") }
+            } else if loadError {
+                SectionLabel(text: "Leaderboard")
+                CardView { EmptyState(text: "Couldn't reach the shared board right now. Try again shortly.") }
+            } else if let locked = lockedSelfEntry {
+                SectionLabel(text: "Leaderboard")
+                PartialRevealLeaderboardCard(
+                    percentile: locked.percentile ?? 50,
+                    populationCount: locked.populationCount ?? 0,
+                    cheerCount: cheersReceived,
+                    onUpgrade: { store.shouldShowDay30Paywall = true },
+                    brass: theme.brass
+                )
+            } else if let fullBoard {
+                SectionLabel(text: "Leaderboard", trailing: "\(fullBoard.count) traders")
+                CardView {
+                    if fullBoard.isEmpty {
+                        EmptyState(text: "No traders on the board yet. Set your handle above to be first.")
+                    } else {
+                        VStack(spacing: 0) {
+                            ForEach(Array(fullBoard.prefix(20).enumerated()), id: \.element.id) { idx, entry in
+                                LeaderRow(rank: idx, entry: entry, isSelf: entry.code == store.state.traderCode, theme: theme)
+                            }
                         }
-                    }
-                    if let myRankIndex, myRankIndex >= 20 {
-                        Text("You're ranked #\(myRankIndex + 1) of \(sortedBoard!.count)")
-                            .font(AppFont.mono(11)).foregroundColor(colors.textFaint).padding(.top, 8)
+                        if let myRankIndex, myRankIndex >= 20 {
+                            Text("You're ranked #\(myRankIndex + 1) of \(fullBoard.count)")
+                                .font(AppFont.mono(11)).foregroundColor(colors.textFaint).padding(.top, 8)
+                        }
                     }
                 }
             }
@@ -429,9 +592,13 @@ struct CaravanView: View {
     private func loadCircle() async {
         loadError = false
         do {
-            leaderboard = try await store.leaderboard.fetchLeaderboard()
+            // Tiered, not the flat `fetchLeaderboard()` — this is what actually
+            // enforces the one-way mirror: a free/lapsed caller gets back a
+            // single locked row (percentile + population only), never other
+            // traders' names or ranks, decided server-side in get_leaderboard_tiered.
+            tieredEntries = try await store.subscription.fetchTieredLeaderboard()
         } catch {
-            leaderboard = []
+            tieredEntries = []
             loadError = true
         }
 
@@ -454,7 +621,17 @@ struct CaravanView: View {
 
     private func sendCheer(_ code: String) async {
         cheerSentAt[code] = Date()
-        await store.leaderboard.sendCheer(code: code)
+        let result = await store.leaderboard.sendCheer(code: code)
+        if let result, !result.success, result.error == "plus_required" {
+            // Stale local hasPlusAccess (trial expired server-side mid-
+            // session) — this button shouldn't have been reachable at all.
+            // Revert the optimistic "sent" state and silently resync
+            // subscription status; the card falls back to its locked state
+            // on its own once hasPlusAccess catches up, no paywall interrupt.
+            cheerSentAt[code] = nil
+            await store.refreshSubscriptionStatus()
+            return
+        }
         cheerAckStatus[code] = await store.leaderboard.fetchCheerAckStatus(code: code)
     }
 
@@ -478,8 +655,10 @@ private struct DuelCard: View {
     let theme: ThemeOption
     let cheerSent: Bool
     let cheerSeen: Bool
+    let hasPlusAccess: Bool
     let onRemove: () -> Void
     let onCheer: () async -> Void
+    let onUpgrade: () -> Void
 
     var body: some View {
         let colors = AdaptivePalette(mode: appearanceMode)
@@ -527,24 +706,45 @@ private struct DuelCard: View {
                     .font(AppFont.mono(11)).foregroundColor(colors.textFaint)
             }
 
-            Button {
-                Task { await onCheer() }
-            } label: {
-                Label(
-                    cheerSeen ? "Seen" : (cheerSent ? "Encouragement sent" : "Send encouragement"),
-                    systemImage: cheerSeen ? "checkmark.circle.fill" : "megaphone.fill"
-                )
-                .font(.system(size: 12.5))
+            if hasPlusAccess {
+                Button {
+                    Task { await onCheer() }
+                } label: {
+                    Label(
+                        cheerSeen ? "Seen" : (cheerSent ? "Encouragement sent" : "Send encouragement"),
+                        systemImage: cheerSeen ? "checkmark.circle.fill" : "megaphone.fill"
+                    )
+                    .font(.system(size: 12.5))
+                }
+                .disabled(friend == nil || cheerSent)
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 9)
+                .background(colors.ink3)
+                .foregroundColor(cheerSeen ? colors.green : theme.brass)
+                .overlay(RoundedRectangle(cornerRadius: 10).stroke(theme.brassDim, lineWidth: 1))
+                .clipShape(RoundedRectangle(cornerRadius: 10))
+                .opacity(friend == nil || cheerSent ? (cheerSeen ? 1 : 0.55) : 1)
+                .padding(.top, 12)
+            } else {
+                // Free/lapsed: view the duel, but sending encouragement is a
+                // Plus-only Caravan interaction — same "view-only" rule as
+                // addFriendCard, applied here instead of just disabling the
+                // button silently.
+                HStack(spacing: 10) {
+                    Image(systemName: "lock.fill").font(.system(size: 12)).foregroundColor(colors.textFaint)
+                    Text("Encouragement is a Plus feature.")
+                        .font(.system(size: 12)).foregroundColor(colors.textDim)
+                    Spacer()
+                    Button("Upgrade", action: onUpgrade)
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundColor(theme.brass)
+                }
+                .padding(.vertical, 9).padding(.horizontal, 12)
+                .background(colors.ink3)
+                .overlay(RoundedRectangle(cornerRadius: 10).stroke(colors.inkLine, lineWidth: 1))
+                .clipShape(RoundedRectangle(cornerRadius: 10))
+                .padding(.top, 12)
             }
-            .disabled(friend == nil || cheerSent)
-            .frame(maxWidth: .infinity)
-            .padding(.vertical, 9)
-            .background(colors.ink3)
-            .foregroundColor(cheerSeen ? colors.green : theme.brass)
-            .overlay(RoundedRectangle(cornerRadius: 10).stroke(theme.brassDim, lineWidth: 1))
-            .clipShape(RoundedRectangle(cornerRadius: 10))
-            .opacity(friend == nil || cheerSent ? (cheerSeen ? 1 : 0.55) : 1)
-            .padding(.top, 12)
         }
     }
 }
@@ -606,6 +806,10 @@ private struct ReadingGroupRow: View {
     let group: ReadingGroupSummary
     let theme: ThemeOption
 
+    var inviteURL: URL {
+        URL(string: "tenscrolls://joingroup?code=\(group.group_code)")!
+    }
+
     var body: some View {
         let colors = AdaptivePalette(mode: appearanceMode)
         HStack {
@@ -613,14 +817,30 @@ private struct ReadingGroupRow: View {
                 Text(group.name)
                     .font(AppFont.display(15))
                     .foregroundColor(colors.text)
-                Text("\(group.member_count) member\(group.member_count == 1 ? "" : "s")")
-                    .font(AppFont.mono(11))
-                    .foregroundColor(colors.textFaint)
+                HStack(spacing: 6) {
+                    Text("\(group.member_count) member\(group.member_count == 1 ? "" : "s")")
+                        .font(AppFont.mono(11))
+                        .foregroundColor(colors.textFaint)
+                    Text("·")
+                        .font(AppFont.mono(11))
+                        .foregroundColor(colors.textFaint)
+                    Text(group.group_code)
+                        .font(AppFont.mono(11))
+                        .foregroundColor(theme.brass)
+                        .tracking(0.8)
+                }
             }
             Spacer()
-            Image(systemName: "chevron.right")
-                .font(.system(size: 12))
-                .foregroundColor(colors.textFaint)
+            ShareLink(
+                item: inviteURL,
+                subject: Text("Join \"\(group.name)\" on Ten Scrolls"),
+                message: Text("Join our reading group \u{2014} use code \(group.group_code).")
+            ) {
+                Image(systemName: "square.and.arrow.up")
+                    .font(.system(size: 14))
+                    .foregroundColor(colors.textDim)
+            }
+            .padding(.leading, 8)
         }
         .padding(.vertical, 8)
     }

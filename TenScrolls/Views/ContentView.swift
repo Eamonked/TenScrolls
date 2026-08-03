@@ -96,7 +96,7 @@ struct ContentView: View {
                               promptSkip: { date in
                                   activeSheet = .skipReason(date: date, isMissedDay: false)
                               },
-                              openScroll: { scroll in activeSheet = .scrollEditor(scroll) })
+                              openScroll: { scroll in attemptOpenScroll(scroll) })
                         .hideNavigationBar()
                 }
                 .tabItem { Label("Today", systemImage: "sunrise") }
@@ -105,7 +105,7 @@ struct ContentView: View {
                 NavigationStack {
                     ScrollsView(onOpenScroll: { id in
                         if let scroll = store.state.scrolls.first(where: { $0.id == id }) {
-                            activeSheet = .scrollEditor(scroll)
+                            attemptOpenScroll(scroll)
                         }
                     }, openLibrary: { activeSheet = .library })
                     .hideNavigationBar()
@@ -254,6 +254,27 @@ struct ContentView: View {
         }
     }
 
+    /// Single choke point for opening any scroll's reader. Scroll I is always
+    /// open; every other scroll goes through `AppStore.canAccessScroll` (which
+    /// checks the Day 30 hard paywall server-side via `can_access_scroll_two`)
+    /// before the editor sheet is allowed to present. On denial, routes to the
+    /// Day 30 paywall instead — this is the actual enforcement point, since
+    /// `scroll.status` only tracks day-progress unlocking, not subscription.
+    private func attemptOpenScroll(_ scroll: Scroll) {
+        guard scroll.id != 1 else {
+            activeSheet = .scrollEditor(scroll)
+            return
+        }
+        Task {
+            let access = await store.canAccessScroll(scroll.id)
+            if access.isAccessible {
+                activeSheet = .scrollEditor(scroll)
+            } else {
+                store.shouldShowDay30Paywall = true
+            }
+        }
+    }
+
     /// Checks that fire when the app comes to the foreground: prompt for a missed
     /// day, then offer the weekly recap (only if nothing else grabbed the screen).
     private func runStartOfDayChecks() {
@@ -288,7 +309,7 @@ struct ContentView: View {
             }
         case .search:
             SearchView { scroll in
-                activeSheet = .scrollEditor(scroll)
+                attemptOpenScroll(scroll)
             }
         case .library:
             LibraryView()

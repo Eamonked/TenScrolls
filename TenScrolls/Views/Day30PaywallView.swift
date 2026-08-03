@@ -7,6 +7,10 @@ struct Day30PaywallView: View {
     @Environment(\.dismiss) private var dismiss
     @State private var isActivating = false
     @State private var percentile: Int? = nil
+    /// Localized price from StoreKit (e.g. "$4.99/mo"), replacing the
+    /// hardcoded "$4.99/month" once the product has loaded. Falls back to
+    /// the hardcoded string while `nil`, so the paywall never shows a blank.
+    @State private var storePrice: String? = nil
 
     private var theme: ThemeOption { Palette.theme(for: store.state.activeThemeId) }
 
@@ -70,7 +74,7 @@ struct Day30PaywallView: View {
                 .padding(.horizontal, 24)
                 
                 // Pricing
-                Text("$4.99/month")
+                Text(storePrice ?? "$4.99/month")
                     .font(.title2.bold())
                 
                 Text("Cancel anytime")
@@ -112,6 +116,7 @@ struct Day30PaywallView: View {
         }
         .task {
             await fetchPercentile()
+            storePrice = await StoreKitManager.shared.displayPrice()
         }
     }
     
@@ -127,20 +132,27 @@ struct Day30PaywallView: View {
         }
     }
     
+    /// Runs the real App Store purchase sheet via `StoreKitManager`, then
+    /// only calls `AppStore.activateSubscription()` (which flips the
+    /// server-side `subscription_status` to `active`) once StoreKit confirms
+    /// a verified purchase — a cancelled or pending purchase leaves the paywall
+    /// open with no state change, same as tapping "Not now" would, since
+    /// there's nothing to activate yet.
     private func upgradeToPlus() {
         isActivating = true
-        // TODO: Integrate with StoreKit IAP flow
-        // For now, just simulate activation
         Task {
-            // In production, this would trigger IAP purchase flow
-            // await initiateIAPPurchase()
-            
-            // Simulated success for development:
-            let success = await store.activateSubscription()
-            isActivating = false
-            if success {
-                dismiss()
+            do {
+                let outcome = try await StoreKitManager.shared.purchase()
+                if case .success(let signedTransaction) = outcome {
+                    let success = await store.activateSubscription(signedTransaction: signedTransaction)
+                    if success {
+                        dismiss()
+                    }
+                }
+            } catch {
+                store.showToast("Purchase failed. Please try again.")
             }
+            isActivating = false
         }
     }
 }

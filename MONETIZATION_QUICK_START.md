@@ -153,7 +153,7 @@ When ready to launch:
 1. **Create In-App Purchase**:
    - Type: Auto-Renewable Subscription
    - Reference Name: "TenScrolls Plus"
-   - Product ID: `com.tenscrolls.plus.monthly`
+   - Product ID: `ekme.TenScrolls.plus.monthly` (must match `StoreKitManager.subscriptionProductID` exactly)
 
 2. **Configure Pricing**:
    - Base Price: $4.99/month

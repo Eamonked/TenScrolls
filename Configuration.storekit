@@ -158,7 +158,39 @@
     }
   ],
   "subscriptionSuiteGroups" : [
+    {
+      "id" : "E6F94E48",
+      "localizations" : [
 
+      ],
+      "name" : "Yearly Plan",
+      "subscriptions" : [
+        {
+          "displayPrice" : "99.99",
+          "duration" : "P1Y",
+          "groupNumber" : 1,
+          "internalID" : "DBC29686",
+          "introductoryOffers" : [
+
+          ],
+          "isFamilyShareable" : false,
+          "localizations" : [
+            {
+              "description" : "",
+              "displayName" : "",
+              "locale" : "en_US"
+            }
+          ],
+          "members" : [
+
+          ],
+          "productID" : "ekme.Tenscrolls.plus.yearly",
+          "referenceName" : "TenScrolls Plus Yearly",
+          "subscriptionGroupID" : "E6F94E48",
+          "type" : "SubscriptionSuite"
+        }
+      ]
+    }
   ],
   "version" : {
     "major" : 6,

@@ -189,14 +189,33 @@ actor SupabaseLeaderboard {
 
     // MARK: - Cheers
 
-    func sendCheer(code: String) async {
+    /// Result of `send_cheer` — decoded so callers can distinguish
+    /// `plus_required` (stale local `hasPlusAccess`, e.g. a trial expired
+    /// server-side mid-session) from a plain network/auth failure, which
+    /// still comes back as `nil` via the catch below.
+    struct SendCheerResult: Decodable {
+        let success: Bool
+        let error: String?
+        let alreadySent: Bool?
+
+        private enum CodingKeys: String, CodingKey {
+            case success, error
+            case alreadySent = "already_sent"
+        }
+    }
+
+    @discardableResult
+    func sendCheer(code: String) async -> SendCheerResult? {
         do {
             try await ensureSignedIn()
-            try await SupabaseConfig.client
+            let result: SendCheerResult = try await SupabaseConfig.client
                 .rpc("send_cheer", params: ["p_to_code": code])
                 .execute()
+                .value
+            return result
         } catch {
-            // Best-effort.
+            // Network/auth failure — distinct from a decoded plus_required.
+            return nil
         }
     }
 

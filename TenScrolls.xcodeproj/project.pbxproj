@@ -17,6 +17,8 @@
 		3E5EE04A301A10D80059F841 /* Realtime in Frameworks */ = {isa = PBXBuildFile; productRef = 3E5EE049301A10D80059F841 /* Realtime */; };
 		3E5EE04C301A10D80059F841 /* Storage in Frameworks */ = {isa = PBXBuildFile; productRef = 3E5EE04B301A10D80059F841 /* Storage */; };
 		3E5EE04E301A10D80059F841 /* Supabase in Frameworks */ = {isa = PBXBuildFile; productRef = 3E5EE04D301A10D80059F841 /* Supabase */; };
+		3E83B2BD3020F570004758FA /* Configuration.storekit in Resources */ = {isa = PBXBuildFile; fileRef = 3E83B27E3020F570004758FA /* Configuration.storekit */; };
+		3E83B2D6302117D8004758FA /* StoreKitTestCertificate.cer in Resources */ = {isa = PBXBuildFile; fileRef = 3E83B2D5302117D8004758FA /* StoreKitTestCertificate.cer */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -48,6 +50,8 @@
 		3E301C793007001600AE81CB /* WidgetKit.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = WidgetKit.framework; path = System/Library/Frameworks/WidgetKit.framework; sourceTree = SDKROOT; };
 		3E301C7B3007001600AE81CB /* SwiftUI.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = SwiftUI.framework; path = System/Library/Frameworks/SwiftUI.framework; sourceTree = SDKROOT; };
 		3E3860DF3018E0B200494EB3 /* TimeUtils.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TimeUtils.swift; sourceTree = "<group>"; };
+		3E83B27E3020F570004758FA /* Configuration.storekit */ = {isa = PBXFileReference; lastKnownFileType = text; path = Configuration.storekit; sourceTree = "<group>"; };
+		3E83B2D5302117D8004758FA /* StoreKitTestCertificate.cer */ = {isa = PBXFileReference; lastKnownFileType = file; path = StoreKitTestCertificate.cer; sourceTree = "<group>"; };
 		3EC8ED902FF8CD1700D12364 /* TenScrolls.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = TenScrolls.app; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
@@ -125,6 +129,8 @@
 		3EC8ED872FF8CD1700D12364 = {
 			isa = PBXGroup;
 			children = (
+				3E83B27E3020F570004758FA /* Configuration.storekit */,
+				3E83B2D5302117D8004758FA /* StoreKitTestCertificate.cer */,
 				3EC8ED922FF8CD1700D12364 /* TenScrolls */,
 				3E301C7D3007001600AE81CB /* TenScrollsWidget */,
 				3E301C783007001600AE81CB /* Frameworks */,
@@ -250,6 +256,8 @@
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				3E83B2BD3020F570004758FA /* Configuration.storekit in Resources */,
+				3E83B2D6302117D8004758FA /* StoreKitTestCertificate.cer in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -301,7 +309,7 @@
 					"@executable_path/Frameworks",
 					"@executable_path/../../Frameworks",
 				);
-				MARKETING_VERSION = 1.0;
+				MARKETING_VERSION = 1.1.0;
 				PRODUCT_BUNDLE_IDENTIFIER = ekme.TenScrolls.TenScrollsWidget;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				REGISTER_APP_GROUPS = YES;
@@ -335,7 +343,7 @@
 					"@executable_path/Frameworks",
 					"@executable_path/../../Frameworks",
 				);
-				MARKETING_VERSION = 1.0;
+				MARKETING_VERSION = 1.1.0;
 				PRODUCT_BUNDLE_IDENTIFIER = ekme.TenScrolls.TenScrollsWidget;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				REGISTER_APP_GROUPS = YES;
@@ -611,6 +619,8 @@
 				kind = upToNextMajorVersion;
 				minimumVersion = 2.5.1;
 			};
+			traits = (
+			);
 		};
 /* End XCRemoteSwiftPackageReference section */
 
