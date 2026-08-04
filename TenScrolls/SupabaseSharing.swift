@@ -63,8 +63,15 @@ actor SupabaseSharing {
     func fetchMyGroups() async -> [ReadingGroupSummary] {
         do {
             try await ensureSignedIn()
+            // NB: the RPC is named `list_my_reading_groups` server-side, not
+            // `fetch_my_reading_groups` — mismatched names here silently
+            // made this call fail every time (PostgREST 404s on an unknown
+            // function), which this actor's do/catch then swallowed into an
+            // empty array. Groups could still be created/joined via the
+            // (correctly-named) create/join RPCs, they just could never be
+            // listed back, so the Caravan tab always looked empty.
             let groups: [ReadingGroupSummary] = try await SupabaseConfig.client
-                .rpc("fetch_my_reading_groups")
+                .rpc("list_my_reading_groups")
                 .execute()
                 .value
             return groups

@@ -177,7 +177,7 @@ struct WidgetStamp: View {
             
             Image(systemName: icon)
                 .font(.system(size: 14))
-                .foregroundColor(done ? WidgetPalette.background : WidgetPalette.textDim)
+                .foregroundColor(done ? WidgetPalette.onBrass : WidgetPalette.textDim)
         }
     }
 }
@@ -195,18 +195,40 @@ extension Color {
         let b = Double(rgb & 0x0000FF) / 255
         self.init(red: r, green: g, blue: b)
     }
+
+    /// A color that resolves to `light` or `dark` at render time from the
+    /// active trait collection. Widgets run in their own process with no
+    /// connection to the host app's in-app `AppearanceMode` picker, so
+    /// unlike `LuxColor` in the main app (which follows that picker via
+    /// `\.colorScheme`), a widget's `\.colorScheme` reflects whatever the
+    /// Home Screen / Lock Screen / StandBy surface it's placed on is
+    /// currently rendering in — the same way every other widget on the
+    /// system adapts. That's exactly what this should follow.
+    static func widgetAdaptive(light: Color, dark: Color) -> Color {
+        #if canImport(UIKit)
+        return Color(uiColor: UIColor { traits in
+            traits.userInterfaceStyle == .dark ? UIColor(dark) : UIColor(light)
+        })
+        #else
+        return dark
+        #endif
+    }
 }
 
 enum WidgetPalette {
-    static let ink = Color(widgetHex: "12161B")
-    static let ink2 = Color(widgetHex: "1A2028")
-    static let ink3 = Color(widgetHex: "232B35")
-    static let inkLine = Color(widgetHex: "293240")
-    static let text = Color(widgetHex: "EDEAE2")
-    static let textDim = Color(widgetHex: "8F97A3")
-    static let textFaint = Color(widgetHex: "5B6270")
-    static let background = Color(widgetHex: "05070A")
-    
+    static let ink = Color.widgetAdaptive(light: Color(widgetHex: "F5F3ED"), dark: Color(widgetHex: "12161B"))
+    static let ink2 = Color.widgetAdaptive(light: Color(widgetHex: "EDEAE2"), dark: Color(widgetHex: "1A2028"))
+    static let ink3 = Color.widgetAdaptive(light: Color(widgetHex: "E3DFD5"), dark: Color(widgetHex: "232B35"))
+    static let inkLine = Color.widgetAdaptive(light: Color(widgetHex: "D4CFC2"), dark: Color(widgetHex: "293240"))
+    static let text = Color.widgetAdaptive(light: Color(widgetHex: "1A1714"), dark: Color(widgetHex: "EDEAE2"))
+    static let textDim = Color.widgetAdaptive(light: Color(widgetHex: "5A5651"), dark: Color(widgetHex: "8F97A3"))
+    static let textFaint = Color.widgetAdaptive(light: Color(widgetHex: "938E85"), dark: Color(widgetHex: "5B6270"))
+    static let background = Color.widgetAdaptive(light: Color(widgetHex: "FDFCF9"), dark: Color(widgetHex: "05070A"))
+    /// Fixed near-black regardless of theme — used only for the icon drawn
+    /// on top of a filled, done `WidgetStamp` circle, where the contrast
+    /// need (dark glyph on a bright brass fill) doesn't change with theme.
+    static let onBrass = Color(widgetHex: "1A1207")
+
     static let brass = Color(widgetHex: "C4903F")
     
     static func themeBrass(for id: String) -> Color {

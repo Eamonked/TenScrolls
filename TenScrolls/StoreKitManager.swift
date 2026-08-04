@@ -21,7 +21,6 @@ actor StoreKitManager {
     private var products: [Product] = []
 
     private init() {}
-
     enum StoreError: Error {
         case productNotFound
         case failedVerification

@@ -36,6 +36,9 @@ final class AppStore: ObservableObject {
     /// Reading groups this device belongs to, for the share-recipient picker
     /// and the Caravan tab's group list.
     @Published var myReadingGroups: [ReadingGroupSummary] = []
+    /// DM inbox — one row per mutual friend. Refreshed on Caravan-tab appear,
+    /// same cadence as `myReadingGroups`. See `refreshDMThreads()`.
+    @Published var dmThreads: [DMThreadSummary] = []
     /// Cheers sent to this device that haven't been acknowledged yet — the
     /// in-app fallback for when a push notification was missed or dismissed
     /// without tapping "Got it". Refreshed on Caravan-tab appear and app
@@ -45,6 +48,11 @@ final class AppStore: ObservableObject {
     /// (7/14/30/60/100 days). `ContentView` presents `MilestoneCelebrationView`
     /// while this is non-nil, then clears it on dismiss.
     @Published var milestoneReached: Int? = nil
+    /// Set the instant a day's third session (dawn/midday/dusk) is completed —
+    /// i.e. the transition into `allComplete`, not every toggle afterward.
+    /// `ContentView` presents `DayCompleteView` while this is true, then
+    /// clears it on dismiss. See `toggleSession`.
+    @Published var dayComplete: Bool = false
 
     private var prevLevel: Int
     private var prevMasteredIds: [Int]
@@ -61,6 +69,7 @@ final class AppStore: ObservableObject {
     private nonisolated let defaultsKey = "ten-scrolls-state"
     let leaderboard = SupabaseLeaderboard()
     let sharing = SupabaseSharing()
+    let messaging = SupabaseMessaging()
     let subscription = SupabaseSubscription()
     let notifier = NotificationManager()
     
@@ -475,7 +484,14 @@ final class AppStore: ObservableObject {
 
         state.bestStreak = max(state.bestStreak, state.currentStreak)
         afterMutation()
-        
+
+        // The day-complete celebration fires on the transition into
+        // allComplete, not on every subsequent toggle (e.g. un-stamping and
+        // re-stamping the same session).
+        if entry.allComplete, !wasComplete {
+            dayComplete = true
+        }
+
         // Check for engagement milestones (Day 3 trial offer)
         checkEngagementMilestones()
         
@@ -811,11 +827,29 @@ final class AppStore: ObservableObject {
         guard !state.friendCodes.contains(code), code != state.traderCode else { return }
         state.friendCodes.append(code)
         schedulePersist()
+        // Best-effort server sync (migration 007) — this is what lets
+        // send_direct_message later tell whether the pair is mutual.
+        // `friendCodes` stays the source of truth for what CaravanView shows
+        // either way; this just teaches the backend the same thing.
+        Task { await messaging.addFriendLink(code: code) }
     }
 
     func removeFriend(_ code: String) {
         state.friendCodes.removeAll { $0 == code }
         schedulePersist()
+        Task { await messaging.removeFriendLink(code: code) }
+    }
+
+    /// Backfills `friend_links` for every locally-added friend. Safe to call
+    /// repeatedly — `add_friend_link` is an idempotent upsert (`ON CONFLICT
+    /// DO NOTHING`). Exists so friends added before migration 007 existed
+    /// still become mutual once both sides have opened the app again,
+    /// without anyone needing to remove-and-re-add each other. Called from
+    /// `CaravanView`'s existing load cycle alongside `refreshReadingGroups()`.
+    func syncFriendLinks() async {
+        for code in state.friendCodes {
+            await messaging.addFriendLink(code: code)
+        }
     }
 
     // MARK: - Cheers (push + acknowledgment)
@@ -981,6 +1015,41 @@ final class AppStore: ObservableObject {
     func dismissSharedScroll(_ share: PendingScrollShare) {
         pendingScrollShares.removeAll { $0.id == share.id }
         Task { await sharing.resolveShare(id: share.id, status: "dismissed") }
+    }
+
+    // MARK: - Direct messages
+
+    /// Refreshes the DM inbox (one row per mutual friend, most recent
+    /// activity first). Cheap enough to call on Caravan-tab appear, same
+    /// cadence as `refreshReadingGroups()`.
+    func refreshDMThreads() async {
+        dmThreads = await messaging.fetchDMThreads()
+    }
+
+    /// Sends a DM and refreshes the inbox on success so the new message's
+    /// preview shows up immediately. Returns the server's error code on
+    /// failure (e.g. "not_mutual_friends") so the caller can show something
+    /// more specific than a generic toast, or nil on success.
+    @discardableResult
+    func sendDirectMessage(toCode: String, body: String) async -> String? {
+        let error = await messaging.sendDirectMessage(toCode: toCode, body: body)
+        if error == nil {
+            await refreshDMThreads()
+        }
+        return error
+    }
+
+    /// Fetches a page of a conversation with one friend, newest first. Pass
+    /// `before` (the oldest `sent_at` already loaded) to page further back.
+    func fetchDirectMessages(withCode: String, before: Date? = nil) async -> [DirectMessage] {
+        await messaging.fetchDirectMessages(withCode: withCode, before: before)
+    }
+
+    /// Marks a thread read and refreshes the inbox so its unread badge
+    /// clears. Call when a DM thread view is opened.
+    func markDMRead(withCode: String) async {
+        await messaging.markRead(withCode: withCode)
+        await refreshDMThreads()
     }
 
     // MARK: - Subscription & Monetization

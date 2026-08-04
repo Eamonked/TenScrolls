@@ -28,6 +28,24 @@
 //   ID) via `supabase secrets set APPLE_APP_ID=123456789`. It's only used
 //   for the Production verifier and is safe to leave unset for Sandbox/
 //   TestFlight testing before the app has shipped.
+//
+// Local StoreKit Testing (Configuration.storekit in Xcode), before there's
+// a real App Store Connect subscription to test against Sandbox with:
+//   Set ALLOW_XCODE_STOREKIT_TESTING=true via
+//   `supabase secrets set ALLOW_XCODE_STOREKIT_TESTING=true`. This adds
+//   Apple's own `Environment.XCODE` as a third verification attempt
+//   (after Production and Sandbox both fail) — the App Store Server
+//   Library's documented, sanctioned mode for exactly this case, which
+//   decodes the transaction but deliberately skips signature verification,
+//   since Xcode-signed transactions were never signed by Apple in the
+//   first place. This is why STOREKIT_TESTING_ROOT_B64 below is only ever
+//   used to satisfy the verifier's constructor, not to actually establish
+//   trust.
+//   MUST be unset (not "false" — actually absent) once real subscription
+//   testing starts. There is no way for this function to tell a real
+//   device apart from a simulator by itself; the secret is the only gate.
+//   Every acceptance via this path is logged distinctly below so it's
+//   never mistaken for a real verified purchase in the logs.
 
 import { createClient } from "npm:@supabase/supabase-js@2";
 import {
@@ -39,6 +57,7 @@ import {
 const BUNDLE_ID = "ekme.TenScrolls";
 const PRODUCT_ID = "ekme.TenScrolls.plus.monthly";
 const APPLE_APP_ID = Deno.env.get("APPLE_APP_ID"); // may be undefined pre-launch
+const ALLOW_XCODE_STOREKIT_TESTING = Deno.env.get("ALLOW_XCODE_STOREKIT_TESTING") === "true";
 
 // Apple's publicly published root CAs, used to validate the certificate
 // chain embedded in every StoreKit-signed JWS. Pinned here as base64
@@ -67,6 +86,19 @@ function decodeBase64Cert(b64: string): Uint8Array {
   return bytes;
 }
 
+// The standard root certificate Xcode's local StoreKit Testing signs
+// transactions with (self-signed, CN=StoreKit, valid 2020-2040) — the same
+// certificate bundled by every Xcode install, not project-specific or
+// secret. Only ever passed to the verifier when Environment.XCODE is being
+// tried (see verifyTransaction), and even then the library skips signature
+// verification for that environment entirely — this cert never actually
+// establishes trust, it just satisfies the constructor's required shape.
+// Re-export from Xcode (Product > Manage StoreKit Configuration, or the
+// StoreKitTestCertificate.cer already checked into this repo) only if
+// Apple ever changes it, which is not expected.
+const STOREKIT_TESTING_ROOT_B64 =
+  "MIIDdDCCAlygAwIBAgIBATANBgkqhkiG9w0BAQsFADBfMREwDwYDVQQDDAhTdG9yZUtpdDERMA8GA1UECgwIU3RvcmVLaXQxETAPBgNVBAsMCFN0b3JlS2l0MQswCQYDVQQGEwJVUzEXMBUGCSqGSIb3DQEJARYIU3RvcmVLaXQwHhcNMjAwNDAxMTc1MjM1WhcNNDAwMzI3MTc1MjM1WjBfMREwDwYDVQQDDAhTdG9yZUtpdDERMA8GA1UECgwIU3RvcmVLaXQxETAPBgNVBAsMCFN0b3JlS2l0MQswCQYDVQQGEwJVUzEXMBUGCSqGSIb3DQEJARYIU3RvcmVLaXQwggEiMA0GCSqGSIb3DQEBAQUAA4IBDwAwggEKAoIBAQDbf5A8LHMP25cmS5O7CvihIT7IYdkkyF4fdT7ak9sxGpGAub/lDMs8uw5EYib6BCm2Sedv4BvmDWjNJW7Ddgj1SguuenQ8xKkLs89iD/u0vPfbhF4o60cN8e2LrPWfsAk4o257yyZQChrhidFydgs5TMtPbsCzX7eVurmoXUp0q+9vQaV+CY26PT3NcFfY7e/V2nfIkwQc7wmIeGXOgfKNcucHGm4mEvcysQ27OJBrBsT8DeWVUM2RyLol9FjJjOFx20pF8y0ZlgNWgaZE7nV3W1PPeKxduj5fUCtcKYzdwtcqF98itNfkeKivqG2nwdpoLWbMzykLUCzjwvvmXxLBAgMBAAGjOzA5MA8GA1UdEwEB/wQFMAMBAf8wDgYDVR0PAQH/BAQDAgKEMBYGA1UdJQEB/wQMMAoGCCsGAQUFBwMDMA0GCSqGSIb3DQEBCwUAA4IBAQCyAOA88ejpYr3A1h1Anle5OJB3dlLSqEtwbrhnmfuzilWf7x0ouF8q0XOfNUc3u0bTdhDy8GnszWKZcflgioRIOMS9i2cluatsM2Wt2MKaeEgP6czBJw3Gz2Q8bYBZM4zKNgYqERuNSc4I/2bARyhL61rBKwlWLKWqCQN7MjHc6IV4SM7AxRIRag8Mri8Fym96ZH8gLHXmTLES0/3jH14NfbhY16B85H9jq5eaK8Mq2NCy4dVaDTkbb2coqRKD1od4bZm9XrMK4JjO9urDjm1p67dAgT2HPXBR0cRdjaXcf2pYGt5gdjdS7P+sGV0MFS+KD/WJyNcrHR7sK5EFpz1P";
+
 function loadRootCertificates(): Uint8Array[] {
   return [decodeBase64Cert(APPLE_ROOT_CA_G3_B64), decodeBase64Cert(APPLE_COMPUTER_ROOT_B64)];
 }
@@ -77,18 +109,29 @@ function loadRootCertificates(): Uint8Array[] {
 /// this mirrors Apple's own recommended pattern of attempting verification
 /// against both environments for apps that support both TestFlight/sandbox
 /// and live purchases from the same endpoint.
+///
+/// When ALLOW_XCODE_STOREKIT_TESTING is set, a third attempt against
+/// Environment.XCODE runs last (only after both real-Apple environments
+/// have already failed) — the library's documented mode for locally-signed
+/// StoreKit Testing transactions, which decodes but does not cryptographically
+/// verify. Returns both the payload and which environment actually matched,
+/// so the caller can log local-testing acceptances distinctly from real
+/// verified purchases rather than treating them identically.
 async function verifyTransaction(signedTransaction: string, rootCerts: Uint8Array[]) {
-  for (const environment of [Environment.PRODUCTION, Environment.SANDBOX]) {
+  const environments = [Environment.PRODUCTION, Environment.SANDBOX];
+  if (ALLOW_XCODE_STOREKIT_TESTING) environments.push(Environment.XCODE);
+
+  for (const environment of environments) {
     try {
       const verifier = new SignedDataVerifier(
-        rootCerts,
+        environment === Environment.XCODE ? [decodeBase64Cert(STOREKIT_TESTING_ROOT_B64)] : rootCerts,
         /* enableOnlineChecks */ false,
         environment,
         BUNDLE_ID,
         APPLE_APP_ID ? Number(APPLE_APP_ID) : undefined,
       );
       const payload = await verifier.verifyAndDecodeTransaction(signedTransaction);
-      return payload;
+      return { payload, environment };
     } catch {
       continue;
     }
@@ -131,21 +174,32 @@ Deno.serve(async (req) => {
 
   // Verify the JWS against Apple's certificates — the actual point of this
   // whole function.
-  let payload;
+  let result;
   try {
     const rootCerts = await loadRootCertificates();
-    payload = await verifyTransaction(signedTransaction, rootCerts);
+    result = await verifyTransaction(signedTransaction, rootCerts);
   } catch (err) {
     console.error("verify-purchase: root cert fetch or verification error", err);
     return new Response(JSON.stringify({ success: false, error: "verification_error" }), { status: 502 });
   }
 
-  if (!payload) {
-    console.error("verify-purchase: verification_failed — JWS did not verify against Production or Sandbox Apple root certs. If this build is running with a local Configuration.storekit file attached to the Xcode scheme, this is expected: local StoreKit Testing transactions are signed by a local test cert, not Apple's real cert chain, and can never pass this check.");
+  if (!result) {
+    const hint = ALLOW_XCODE_STOREKIT_TESTING
+      ? "Tried Production, Sandbox, and Xcode (ALLOW_XCODE_STOREKIT_TESTING is on) — none matched. If this is a local StoreKit Testing run, double-check Configuration.storekit's product ID matches PRODUCT_ID below."
+      : "JWS did not verify against Production or Sandbox Apple root certs. If this build is running with a local Configuration.storekit file attached to the Xcode scheme, this is expected — local StoreKit Testing transactions are signed by a local test cert, not Apple's real cert chain, and can never pass this check. Set ALLOW_XCODE_STOREKIT_TESTING=true (dev/pre-launch only, never in production) to allow those too.";
+    console.error(`verify-purchase: verification_failed — ${hint}`);
     return new Response(
       JSON.stringify({ success: false, error: "verification_failed", message: "Couldn't verify this purchase with Apple." }),
       { status: 400 },
     );
+  }
+
+  const { payload, environment } = result;
+  if (environment === Environment.XCODE) {
+    // Distinct from a real verified purchase on purpose — this activation
+    // was NOT cryptographically verified, only decoded. Should only ever
+    // appear in logs for this dev/pre-launch project.
+    console.warn(`verify-purchase: ACCEPTED VIA LOCAL XCODE STOREKIT TESTING (unverified) — productId=${payload.productId}, transactionId=${payload.transactionId}, userId will be logged below after auth.`);
   }
   if (payload.productId !== PRODUCT_ID) {
     console.error(`verify-purchase: product_mismatch — expected ${PRODUCT_ID}, got ${payload.productId}`);

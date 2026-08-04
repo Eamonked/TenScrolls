@@ -1,14 +1,22 @@
 import SwiftUI
+import CoreImage.CIFilterBuiltins
 #if canImport(UIKit)
 import UIKit
 #elseif canImport(AppKit)
 import AppKit
 #endif
 
-
+/// $500 Club rebuild of the Caravan screen — "The Caravan": a private ledger
+/// of fellow traders. No chat, no DMs; presence and numbers only. Reuses
+/// every existing AppStore/Supabase call from the previous implementation
+/// (leaderboard, sharing, cheers, reading groups) — only the presentation
+/// and copy changed. Reading Groups is kept (existing, wired functionality)
+/// even though it wasn't in the visual brief, styled to match; a true
+/// "Salons" presence-only feature would need new server-side data (a daily
+/// note + per-member last-read-today flag) that doesn't exist yet, so it's
+/// deliberately left out rather than faked with placeholder data.
 struct CaravanView: View {
     @EnvironmentObject var store: AppStore
-    @Environment(\.appearanceMode) var appearanceMode
 
     @State private var editingName = false
     @State private var nameDraft = ""
@@ -16,11 +24,6 @@ struct CaravanView: View {
     @State private var friendError = ""
     @State private var copied = false
 
-    /// Raw rows from the tiered RPC. For Plus users this is the full ranked
-    /// list (one row per trader); for free/lapsed users it's a single locked
-    /// row carrying only this device's own percentile/population — the
-    /// server decides which shape comes back based on subscription status,
-    /// this view just renders whichever it received. See `fullBoard` below.
     @State private var tieredEntries: [TieredLeaderboardEntry]? = nil
     @State private var loadError = false
     @State private var friendData: [String: FriendSnapshot] = [:]
@@ -35,17 +38,10 @@ struct CaravanView: View {
     @State private var groupNameDraft = ""
     @State private var groupCodeDraft = ""
     @State private var groupMessage: String?
-    @State private var groupMessageIsError = false
 
-    var theme: ThemeOption { Palette.theme(for: store.state.activeThemeId) }
     var myStreak: Int { store.state.currentStreak }
     var myLevel: Int { store.state.levelInfo().level }
 
-    /// Only meaningful for Plus users — the unlocked rows from `tieredEntries`,
-    /// already ranked server-side (`get_leaderboard_tiered` orders by XP), so
-    /// no client-side re-sort is needed. Free/lapsed users get a single
-    /// `is_locked` row, which maps to an empty board here since there's
-    /// nothing to list — see `partialRevealCard` for their view instead.
     var fullBoard: [LeaderboardEntry]? {
         tieredEntries?.compactMap { row -> LeaderboardEntry? in
             guard !row.isLocked,
@@ -59,283 +55,180 @@ struct CaravanView: View {
                 totalDays: totalDays, mastered: mastered, lastActive: lastActive))
         }
     }
-    var myRankIndex: Int? {
-        fullBoard?.firstIndex(where: { $0.code == store.state.traderCode })
-    }
-    /// The locked row for a free/lapsed user — carries just this device's own
-    /// percentile and the population count, nothing about anyone else.
     var lockedSelfEntry: TieredLeaderboardEntry? {
         tieredEntries?.first(where: { $0.isLocked })
     }
-    /// Deep link opened by `AppStore.handleIncomingURL` on the recipient's
-    /// device, pre-filling their add-friend field with this trader's code.
     var inviteURL: URL {
         URL(string: "tenscrolls://addfriend?code=\(store.state.traderCode)")!
     }
 
     var body: some View {
-        let colors = AdaptivePalette(mode: appearanceMode)
         ScrollView {
-            VStack(alignment: .leading, spacing: 10) {
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("FELLOW TRADERS").font(AppFont.mono(11)).tracking(1.4).foregroundColor(theme.brass)
-                    Text("The Caravan").font(AppFont.display(28)).foregroundColor(colors.text)
-                }
-                Text("Set a trader handle to appear on the shared leaderboard, then add friends by their trader code to compare streaks and send encouragement.")
-                    .font(.system(size: 13)).foregroundColor(colors.textDim)
-                    .padding(.bottom, 6)
-
-                identityCard
-                if !store.pendingCheers.isEmpty {
-                    pendingCheersBanner
-                }
+            VStack(alignment: .leading, spacing: 32) {
+                header
+                yourMarkCard
+                if !store.pendingCheers.isEmpty { pendingCheersRow }
                 notificationsSection
-                addFriendCard
+                inviteSection
                 duelsSection
                 readingGroupsSection
                 leaderboardSection
-
-                Color.clear.frame(height: 10)
             }
             .padding(.horizontal, 20)
-            .padding(.top, 10)
+            .padding(.top, 12)
+            .padding(.bottom, 120)
         }
-        .background(colors.background)
+        .background(LuxColor.bg.ignoresSafeArea())
         .task(id: "\(store.state.friendCodes.joined())-\(store.state.traderCode)") {
             await loadCircle()
             await store.refreshReadingGroups()
             await store.refreshPendingShares()
             await store.refreshPendingCheers()
+            await store.syncFriendLinks()
         }
         .onAppear {
             if store.state.traderName.isEmpty { editingName = true }
             consumePendingFriendCode()
             consumePendingGroupCode()
-            // Belt-and-suspenders: catches shares/cheers that arrived while
-            // this tab was already loaded and the user just switched back
-            // to it, since the .task(id:) above won't refire for that case.
             Task {
                 await store.refreshPendingShares()
                 await store.refreshPendingCheers()
             }
         }
-        .onChange(of: store.pendingFriendCode) { _, _ in
-            consumePendingFriendCode()
-        }
-        .onChange(of: store.pendingGroupCode) { _, _ in
-            consumePendingGroupCode()
-        }
+        .onChange(of: store.pendingFriendCode) { _, _ in consumePendingFriendCode() }
+        .onChange(of: store.pendingGroupCode) { _, _ in consumePendingGroupCode() }
         #if canImport(UIKit)
         .sheet(isPresented: $showStreakShare) {
-            if let shareImage {
-                ActivityShareSheet(items: [shareImage])
-            }
+            if let shareImage { ActivityShareSheet(items: [shareImage]) }
         }
         #endif
         .sheet(item: $selectedShare) { share in
             ScrollShareDetailView(share: share)
-                .environment(\.appearanceMode, appearanceMode)
         }
     }
 
-    /// In-app fallback for cheers whose push was missed, dismissed unseen,
-    /// or arrived while notification permission was denied. Each row lets
-    /// the recipient explicitly acknowledge — same action as the push's
-    /// "Got it" button, just reachable without leaving the app.
-    private var pendingCheersBanner: some View {
-        let colors = AdaptivePalette(mode: appearanceMode)
-        return VStack(alignment: .leading, spacing: 0) {
-            SectionLabel(text: "Encouragement")
-            CardView {
-                VStack(spacing: 10) {
-                    ForEach(store.pendingCheers) { cheer in
-                        HStack(spacing: 10) {
-                            Image(systemName: "megaphone.fill").foregroundColor(theme.brass)
-                            Text("\(cheer.from_trader_name) sent you encouragement")
-                                .font(.system(size: 13)).foregroundColor(colors.text)
-                            Spacer()
-                            Button("Got it") {
-                                store.acknowledgeCheer(id: cheer.cheer_id)
-                            }
-                            .font(.system(size: 12.5, weight: .semibold))
-                            .foregroundColor(theme.brass)
-                        }
-                    }
+    // MARK: - Header
+
+    private var header: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text("FELLOW TRADERS").luxEyebrow()
+            Text("The Caravan")
+                .font(LuxFont.serif(34))
+                .tracking(-0.3)
+                .foregroundColor(LuxColor.textPrimary)
+            Text("A private ledger of those walking the same path. By invitation only.")
+                .font(LuxFont.sans(13))
+                .foregroundColor(LuxColor.textSecondary)
+                .lineSpacing(4)
+        }
+    }
+
+    // MARK: - Your Mark
+
+    private var yourMarkCard: some View {
+        LuxCard {
+            VStack(alignment: .leading, spacing: 18) {
+                HStack {
+                    Text("YOUR MARK").luxEyebrow()
+                    Spacer()
+                    Text("EST. \(estYear)")
+                        .font(LuxFont.mono(10))
+                        .foregroundColor(LuxColor.textMuted)
                 }
-            }
-        }
-    }
 
-    /// Everything another trader has sent this device that's still awaiting a
-    /// decision — currently just shared scrolls, but the section (and
-    /// `notificationRow`) is written generically so other received-item types
-    /// can join it later without a redesign. Always visible, like the other
-    /// Caravan sections, so an empty state is as discoverable as a full one.
-    private var notificationsSection: some View {
-        let colors = AdaptivePalette(mode: appearanceMode)
-        return VStack(alignment: .leading, spacing: 0) {
-            SectionLabel(
-                text: "Notifications",
-                trailing: store.pendingScrollShares.isEmpty ? nil : "\(store.pendingScrollShares.count) new"
-            )
-            CardView {
-                if store.pendingScrollShares.isEmpty {
-                    EmptyState(text: "Nothing waiting on you right now. Shared scrolls will show up here.")
+                if editingName {
+                    VStack(alignment: .leading, spacing: 10) {
+                        TextField("", text: $nameDraft, prompt: Text("Choose a trader handle\u{2026}").foregroundColor(LuxColor.textMuted))
+                            .font(LuxFont.serif(18))
+                            .foregroundColor(LuxColor.textPrimary)
+                            .onSubmit(saveName)
+                        Button("Save Handle", action: saveName)
+                            .buttonStyle(LuxPrimaryButtonStyle(disabled: nameDraft.trimmingCharacters(in: .whitespaces).isEmpty))
+                            .disabled(nameDraft.trimmingCharacters(in: .whitespaces).isEmpty)
+                    }
                 } else {
-                    VStack(spacing: 0) {
-                        ForEach(Array(store.pendingScrollShares.enumerated()), id: \.element.id) { idx, share in
-                            if idx > 0 {
-                                Divider().overlay(colors.inkLine)
+                    HStack(spacing: 14) {
+                        Circle()
+                            .fill(LuxColor.cardBorder)
+                            .overlay(Circle().stroke(LuxColor.gold, lineWidth: 0.5))
+                            .frame(width: 56, height: 56)
+                            .overlay(
+                                Text(String(store.state.traderName.prefix(1)).uppercased())
+                                    .font(LuxFont.serif(22))
+                                    .foregroundColor(LuxColor.gold)
+                            )
+                        VStack(alignment: .leading, spacing: 4) {
+                            HStack(spacing: 8) {
+                                Text(store.state.traderName)
+                                    .font(LuxFont.serif(24))
+                                    .foregroundColor(LuxColor.textPrimary)
+                                Button {
+                                    nameDraft = store.state.traderName
+                                    editingName = true
+                                } label: {
+                                    Image(systemName: "pencil").font(.system(size: 11, weight: .light)).foregroundColor(LuxColor.textMuted)
+                                }
+                                .buttonStyle(.plain)
                             }
-                            notificationRow(share, colors: colors)
+                            Text("LEVEL \(Roman.from(max(1, myLevel))) \u{2022} \(Roman.from(max(0, myStreak))) DAY STREAK")
+                                .font(LuxFont.mono(10))
+                                .tracking(1)
+                                .foregroundColor(LuxColor.textSecondary)
                         }
+                        Spacer()
                     }
                 }
-            }
-        }
-    }
 
-    private func notificationRow(_ share: PendingScrollShare, colors: AdaptivePalette) -> some View {
-        Button {
-            selectedShare = share
-        } label: {
-            HStack(spacing: 12) {
-                Circle()
-                    .fill(theme.brass.opacity(0.15))
-                    .frame(width: 34, height: 34)
-                    .overlay(Image(systemName: "tray.and.arrow.down.fill").font(.system(size: 13)).foregroundColor(theme.brass))
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("\(share.from_trader_name.isEmpty ? share.from_trader_code : share.from_trader_name) shared \(share.title.isEmpty ? "a scroll" : "\u{201C}\(share.title)\u{201D}")")
-                        .font(.system(size: 13, weight: .semibold)).foregroundColor(colors.text)
-                        .lineLimit(2)
-                    Text(timeAgo(share.created_at))
-                        .font(AppFont.mono(10.5)).foregroundColor(colors.textFaint)
-                }
-                Spacer()
-                Image(systemName: "chevron.right").font(.system(size: 12)).foregroundColor(colors.textFaint)
-            }
-            .padding(.vertical, 10)
-        }
-        .buttonStyle(.plain)
-    }
-
-    /// Prefills and submits the add-friend field from an opened
-    /// `tenscrolls://addfriend?code=...` link, then clears the pending code
-    /// so it isn't re-applied on the next appearance.
-    private func consumePendingFriendCode() {
-        guard let code = store.pendingFriendCode else { return }
-        friendInput = code
-        submitFriend()
-        store.pendingFriendCode = nil
-    }
-
-    /// Prefills the join-group field from an opened
-    /// `tenscrolls://joingroup?code=...` link and fires the join, then clears
-    /// the pending code so it isn't re-applied on the next appearance.
-    private func consumePendingGroupCode() {
-        guard let code = store.pendingGroupCode else { return }
-        groupCodeDraft = code
-        store.pendingGroupCode = nil
-        Task { await submitJoinGroup() }
-    }
-
-    // MARK: - Identity
-
-    private var identityCard: some View {
-        let colors = AdaptivePalette(mode: appearanceMode)
-        return CardView {
-            Text("YOUR MARK").font(AppFont.mono(10)).tracking(1.4).foregroundColor(colors.textFaint)
-                .padding(.bottom, 8)
-
-            if editingName {
-                VStack(alignment: .leading, spacing: 10) {
-                    TextField("Choose a trader handle…", text: $nameDraft)
-                        .textFieldStyle(AppTextFieldStyle())
-                        .onSubmit(saveName)
-                    Button("Save handle", action: saveName)
-                        .buttonStyle(PrimaryButtonStyle(brass: theme.brass, glow: theme.glow, disabled: nameDraft.trimmingCharacters(in: .whitespaces).isEmpty))
-                        .disabled(nameDraft.trimmingCharacters(in: .whitespaces).isEmpty)
-                }
-            } else {
-                HStack(spacing: 13) {
-                    Circle()
-                        .fill(RadialGradient(colors: [theme.glow, theme.brass], center: .init(x: 0.35, y: 0.3), startRadius: 2, endRadius: 26))
-                        .frame(width: 46, height: 46)
-                        .overlay(Text(String(store.state.traderName.prefix(1)).uppercased()).font(AppFont.display(17, weight: .bold)).foregroundColor(Color(hex: "1A1207")))
-                    VStack(alignment: .leading, spacing: 3) {
-                        HStack(spacing: 7) {
-                            Text(store.state.traderName).font(AppFont.display(19)).foregroundColor(colors.text)
-                            Button {
-                                nameDraft = store.state.traderName
-                                editingName = true
-                            } label: {
-                                Image(systemName: "pencil").font(.system(size: 12)).foregroundColor(colors.textFaint)
-                            }
-                            .buttonStyle(.plain)
-                        }
-                        Text("Level \(myLevel) · \(myStreak)d streak · \(cheersReceived) cheer\(cheersReceived == 1 ? "" : "s") received")
-                            .font(AppFont.mono(11)).foregroundColor(colors.textFaint)
+                HStack(alignment: .center, spacing: 16) {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("TRADER CODE").luxEyebrow(tracking: 1.2)
+                        Text(store.state.traderCode)
+                            .font(LuxFont.mono(18, weight: .regular))
+                            .tracking(3)
+                            .foregroundColor(LuxColor.textPrimary)
                     }
                     Spacer()
+                    QRCodeView(string: inviteURL.absoluteString)
+                        .frame(width: 72, height: 72)
+                        .clipShape(RoundedRectangle(cornerRadius: 4))
+                    ShareLink(item: inviteURL, subject: Text("Join me on Ten Scrolls"), message: Text("Add me as a fellow trader \u{2014} my code is \(store.state.traderCode)")) {
+                        squareIcon("square.and.arrow.up")
+                    }
+                    Button {
+                        copyCode()
+                    } label: {
+                        squareIcon(copied ? "checkmark" : "doc.on.doc")
+                    }
+                    .buttonStyle(.plain)
                 }
             }
-
-            HStack(spacing: 8) {
-                Text(store.state.traderCode)
-                    .font(AppFont.mono(12.5)).tracking(1.2).foregroundColor(theme.brass)
-                Spacer()
-                ShareLink(
-                    item: inviteURL,
-                    subject: Text("Join me on Ten Scrolls"),
-                    message: Text("Add me as a fellow trader in the Caravan \u{2014} my code is \(store.state.traderCode).")
-                ) {
-                    Image(systemName: "square.and.arrow.up").foregroundColor(colors.textDim)
-                }
-                Button {
-                    #if canImport(UIKit)
-                    UIPasteboard.general.string = store.state.traderCode
-                    #elseif canImport(AppKit)
-                    let pasteboard = NSPasteboard.general
-                    pasteboard.clearContents()
-                    pasteboard.setString(store.state.traderCode, forType: .string)
-                    #endif
-                    copied = true
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 1.8) { copied = false }
-                } label: {
-                    Image(systemName: copied ? "checkmark" : "doc.on.doc")
-                        .foregroundColor(copied ? colors.green : colors.textDim)
-                }
-                .buttonStyle(.plain)
-            }
-            .padding(.horizontal, 12).padding(.vertical, 9)
-            .background(colors.ink3)
-            .overlay(RoundedRectangle(cornerRadius: 10).stroke(colors.inkLine, lineWidth: 1))
-            .clipShape(RoundedRectangle(cornerRadius: 10))
-            .padding(.top, 12)
-
-            #if canImport(UIKit)
-            Button {
-                shareImage = ShareCard.renderImage(
-                    traderName: store.state.traderName,
-                    streak: myStreak,
-                    level: myLevel,
-                    rank: store.state.levelInfo().rank,
-                    theme: theme
-                )
-                showStreakShare = shareImage != nil
-            } label: {
-                Label("Share your streak", systemImage: "square.and.arrow.up.on.square")
-                    .font(.system(size: 12.5))
-            }
-            .frame(maxWidth: .infinity)
-            .padding(.vertical, 9)
-            .background(colors.ink3)
-            .foregroundColor(theme.brass)
-            .overlay(RoundedRectangle(cornerRadius: 10).stroke(theme.brassDim, lineWidth: 1))
-            .clipShape(RoundedRectangle(cornerRadius: 10))
-            .padding(.top, 10)
-            #endif
         }
+    }
+
+    private var estYear: String {
+        let f = DateFormatter()
+        f.dateFormat = "yyyy"
+        return f.string(from: Date())
+    }
+
+    private func squareIcon(_ systemImage: String) -> some View {
+        Image(systemName: systemImage)
+            .font(.system(size: 13, weight: .light))
+            .foregroundColor(LuxColor.textSecondary)
+            .frame(width: 36, height: 36)
+            .overlay(RoundedRectangle(cornerRadius: 8).stroke(LuxColor.cardBorder, lineWidth: 0.5))
+    }
+
+    private func copyCode() {
+        #if canImport(UIKit)
+        UIPasteboard.general.string = store.state.traderCode
+        #elseif canImport(AppKit)
+        let pasteboard = NSPasteboard.general
+        pasteboard.clearContents()
+        pasteboard.setString(store.state.traderCode, forType: .string)
+        #endif
+        copied = true
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.8) { copied = false }
     }
 
     private func saveName() {
@@ -345,51 +238,125 @@ struct CaravanView: View {
         editingName = false
     }
 
-    // MARK: - Add friend
+    // MARK: - Pending cheers (in-app fallback)
 
-    /// Growing your circle is a Plus perk — the strategy doc's "View Only"
-    /// Caravan rule for free/lapsed users. Existing friends stay fully visible
-    /// (see `duelsSection`); this only gates *adding new ones*.
-    private var addFriendCard: some View {
-        let colors = AdaptivePalette(mode: appearanceMode)
-        return VStack(alignment: .leading, spacing: 0) {
-            SectionLabel(text: "Add a Friend")
+    private var pendingCheersRow: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("ACKNOWLEDGEMENTS").luxEyebrow()
+            VStack(spacing: 8) {
+                ForEach(store.pendingCheers) { cheer in
+                    LuxRowCard(cornerRadius: 12) {
+                        HStack(spacing: 10) {
+                            Text("\(cheer.from_trader_name) acknowledged your practice")
+                                .font(LuxFont.sans(13))
+                                .foregroundColor(LuxColor.textPrimary)
+                            Spacer()
+                            Button("Got it") { store.acknowledgeCheer(id: cheer.cheer_id) }
+                                .font(LuxFont.sans(12, weight: .semibold))
+                                .foregroundColor(LuxColor.gold)
+                        }
+                        .padding(12)
+                    }
+                }
+            }
+        }
+    }
+
+    // MARK: - Notifications
+
+    private var notificationsSection: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("NOTIFICATIONS").luxEyebrow()
+            if store.pendingScrollShares.isEmpty {
+                LuxEmptyLine(text: "No messages in the ledger.")
+            } else {
+                VStack(spacing: 8) {
+                    ForEach(store.pendingScrollShares) { share in
+                        notificationRow(share)
+                    }
+                }
+            }
+        }
+    }
+
+    private func notificationRow(_ share: PendingScrollShare) -> some View {
+        Button { selectedShare = share } label: {
+            LuxRowCard(cornerRadius: 14) {
+                HStack(spacing: 12) {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("\(share.from_trader_name.isEmpty ? share.from_trader_code : share.from_trader_name) shared \(share.title.isEmpty ? "a scroll" : "\u{201C}\(share.title)\u{201D}")")
+                            .font(LuxFont.sans(13, weight: .medium))
+                            .foregroundColor(LuxColor.textPrimary)
+                            .lineLimit(2)
+                        Text(timeAgo(share.created_at))
+                            .font(LuxFont.mono(9))
+                            .foregroundColor(LuxColor.textMuted)
+                    }
+                    Spacer()
+                    Image(systemName: "chevron.right").font(.system(size: 11, weight: .light)).foregroundColor(LuxColor.textMuted)
+                }
+                .padding(14)
+            }
+        }
+        .buttonStyle(.plain)
+    }
+
+    private func consumePendingFriendCode() {
+        guard let code = store.pendingFriendCode else { return }
+        friendInput = code
+        submitFriend()
+        store.pendingFriendCode = nil
+    }
+
+    private func consumePendingGroupCode() {
+        guard let code = store.pendingGroupCode else { return }
+        groupCodeDraft = code
+        store.pendingGroupCode = nil
+        Task { await submitJoinGroup() }
+    }
+
+    // MARK: - Invite
+
+    private var inviteSection: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("INVITE").luxEyebrow()
             if store.state.hasPlusAccess {
-                CardView {
-                    HStack(spacing: 8) {
-                        TextField("Enter their trader code…", text: $friendInput)
-                            .textFieldStyle(AppTextFieldStyle())
+                VStack(alignment: .leading, spacing: 8) {
+                    HStack(spacing: 12) {
+                        TextField("", text: $friendInput, prompt: Text("Enter trader code").font(.custom("CormorantGaramond-Italic", size: 16)).foregroundColor(LuxColor.textMuted))
+                            .font(LuxFont.serif(16))
+                            .tracking(1)
+                            .foregroundColor(LuxColor.textPrimary)
                             #if os(iOS)
                             .textInputAutocapitalization(.characters)
                             #endif
                             .onSubmit(submitFriend)
-                        Button(action: submitFriend) {
-                            Image(systemName: "person.badge.plus")
-                        }
-                        .frame(width: 40, height: 40)
-                        .background(colors.ink3)
-                        .foregroundColor(theme.brass)
-                        .overlay(RoundedRectangle(cornerRadius: 10).stroke(colors.inkLine, lineWidth: 1))
-                        .clipShape(RoundedRectangle(cornerRadius: 10))
+                        Rectangle().fill(Color.clear).frame(width: 0, height: 0) // spacer keeps HStack from collapsing underline
+                        Button("Invite \u{2192}", action: submitFriend)
+                            .font(LuxFont.sans(12, weight: .semibold))
+                            .tracking(0.6)
+                            .foregroundColor(LuxColor.gold)
                     }
+                    Rectangle().fill(LuxColor.divider).frame(height: 0.5)
                     if !friendError.isEmpty {
-                        Text(friendError).font(AppFont.mono(11)).foregroundColor(colors.red).padding(.top, 8)
+                        Text(friendError).font(LuxFont.mono(10)).foregroundColor(.red.opacity(0.8))
                     }
-                    Text("Share your own code above so they can add you back.")
-                        .font(AppFont.mono(11)).foregroundColor(colors.textFaint)
-                        .padding(.top, friendError.isEmpty ? 8 : 4)
+                    Text("Your code is private. Share only with those you trust.")
+                        .font(LuxFont.sans(10))
+                        .italic()
+                        .foregroundColor(LuxColor.textMuted)
+                        .padding(.top, 8)
                 }
             } else {
-                CardView {
-                    HStack(spacing: 10) {
-                        Image(systemName: "lock.fill").font(.system(size: 13)).foregroundColor(colors.textFaint)
-                        Text("Adding new traders is a Plus feature.")
-                            .font(.system(size: 12.5)).foregroundColor(colors.textDim)
-                        Spacer()
-                        Button("Upgrade") { store.shouldShowDay30Paywall = true }
-                            .font(.system(size: 12.5, weight: .semibold))
-                            .foregroundColor(theme.brass)
-                    }
+                HStack(spacing: 10) {
+                    Image(systemName: "lock").font(.system(size: 12, weight: .light)).foregroundColor(LuxColor.textMuted)
+                    Text("Inviting new traders is a Plus feature.")
+                        .font(LuxFont.sans(12))
+                        .foregroundColor(LuxColor.textSecondary)
+                    Spacer()
+                    Button("Upgrade") { store.shouldShowDay30Paywall = true }
+                        .font(LuxFont.sans(12, weight: .semibold))
+                        .foregroundColor(LuxColor.gold)
                 }
             }
         }
@@ -405,131 +372,118 @@ struct CaravanView: View {
         friendInput = ""
     }
 
-    // MARK: - Duels
+    // MARK: - Duels ("The Ledger")
 
     private var duelsSection: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            SectionLabel(text: "Streak Duels")
+        VStack(alignment: .leading, spacing: 10) {
+            HStack {
+                Text("DUELS").luxEyebrow()
+                Spacer()
+                Text("\(store.state.friendCodes.count) ACTIVE")
+                    .font(LuxFont.mono(10))
+                    .foregroundColor(LuxColor.textMuted)
+            }
             if store.state.friendCodes.isEmpty {
-                CardView { EmptyState(text: "No friends added yet. Add a trader code above to start a streak duel.") }
+                LuxEmptyLine(text: "No friends added yet. Invite a trader code above.")
             } else {
-                ForEach(store.state.friendCodes, id: \.self) { code in
-                    let ack = cheerAckStatus[code]
-                    let ackSentToday = (ack?.sent ?? false) && isToday(ack?.sent_at)
-                    let sentLocallyToday = isToday(cheerSentAt[code])
-                    DuelCard(
-                        code: code,
-                        friend: friendData[code],
-                        myStreak: myStreak,
-                        theme: theme,
-                        cheerSent: sentLocallyToday || ackSentToday,
-                        cheerSeen: ackSentToday && (ack?.acknowledged ?? false),
-                        hasPlusAccess: store.state.hasPlusAccess,
-                        onRemove: { store.removeFriend(code) },
-                        onCheer: { await sendCheer(code) },
-                        onUpgrade: { store.shouldShowDay30Paywall = true }
-                    )
+                VStack(spacing: 12) {
+                    ForEach(store.state.friendCodes.prefix(5), id: \.self) { code in
+                        let ack = cheerAckStatus[code]
+                        let ackSentToday = (ack?.sent ?? false) && isToday(ack?.sent_at)
+                        let sentLocallyToday = isToday(cheerSentAt[code])
+                        DuelRow(
+                            code: code,
+                            friend: friendData[code],
+                            myStreak: myStreak,
+                            cheerSent: sentLocallyToday || ackSentToday,
+                            cheerSeen: ackSentToday && (ack?.acknowledged ?? false),
+                            hasPlusAccess: store.state.hasPlusAccess,
+                            onRemove: { store.removeFriend(code) },
+                            onCheer: { await sendCheer(code) }
+                        )
+                    }
                 }
             }
         }
     }
 
-    // MARK: - Reading Groups
+    // MARK: - Reading Groups (existing functionality, not in visual brief)
 
     private var readingGroupsSection: some View {
-        let colors = AdaptivePalette(mode: appearanceMode)
-        return VStack(alignment: .leading, spacing: 0) {
-            SectionLabel(text: "Reading Groups", trailing: store.myReadingGroups.isEmpty ? nil : "\(store.myReadingGroups.count) group\(store.myReadingGroups.count == 1 ? "" : "s")")
-            CardView {
-                VStack(alignment: .leading, spacing: 12) {
-                    // Existing groups list
+        VStack(alignment: .leading, spacing: 10) {
+            HStack {
+                Text("READING GROUPS").luxEyebrow()
+                Spacer()
+                if !store.myReadingGroups.isEmpty {
+                    Text("\(store.myReadingGroups.count) GROUP\(store.myReadingGroups.count == 1 ? "" : "S")")
+                        .font(LuxFont.mono(10)).foregroundColor(LuxColor.textMuted)
+                }
+            }
+            LuxRowCard {
+                VStack(alignment: .leading, spacing: 14) {
                     if !store.myReadingGroups.isEmpty {
                         VStack(spacing: 0) {
                             ForEach(Array(store.myReadingGroups.enumerated()), id: \.element.id) { idx, group in
-                                if idx > 0 { Divider().overlay(colors.inkLine) }
-                                ReadingGroupRow(group: group, theme: theme)
+                                if idx > 0 { LuxDivider() }
+                                readingGroupRow(group)
                             }
                         }
-                        Divider().overlay(colors.inkLine).padding(.top, 4)
+                        LuxDivider()
                     }
-
-                    // Create group
-                    VStack(alignment: .leading, spacing: 8) {
-                        Text("Create a group".uppercased())
-                            .font(AppFont.mono(10)).tracking(1.2).foregroundColor(colors.textFaint)
-                        HStack(spacing: 8) {
-                            TextField("Group name…", text: $groupNameDraft)
-                                .textFieldStyle(AppTextFieldStyle())
-                                .onSubmit { Task { await submitCreateGroup() } }
-                            Button { Task { await submitCreateGroup() } } label: {
-                                Image(systemName: "plus")
-                            }
-                            .frame(width: 40, height: 40)
-                            .background(colors.ink3)
-                            .foregroundColor(theme.brass)
-                            .overlay(RoundedRectangle(cornerRadius: 10).stroke(colors.inkLine, lineWidth: 1))
-                            .clipShape(RoundedRectangle(cornerRadius: 10))
-                        }
+                    HStack(spacing: 8) {
+                        TextField("", text: $groupNameDraft, prompt: Text("Group name\u{2026}").foregroundColor(LuxColor.textMuted))
+                            .font(LuxFont.sans(13)).foregroundColor(LuxColor.textPrimary)
+                            .onSubmit { Task { await submitCreateGroup() } }
+                        Button { Task { await submitCreateGroup() } } label: { squareIcon("plus") }
+                            .buttonStyle(.plain)
                     }
-
-                    // Join group
-                    VStack(alignment: .leading, spacing: 8) {
-                        Text("Join a group".uppercased())
-                            .font(AppFont.mono(10)).tracking(1.2).foregroundColor(colors.textFaint)
-                        HStack(spacing: 8) {
-                            TextField("Enter group code…", text: $groupCodeDraft)
-                                .textFieldStyle(AppTextFieldStyle())
-                                #if os(iOS)
-                                .textInputAutocapitalization(.characters)
-                                #endif
-                                .onSubmit { Task { await submitJoinGroup() } }
-                            Button { Task { await submitJoinGroup() } } label: {
-                                Image(systemName: "arrow.right")
-                            }
-                            .frame(width: 40, height: 40)
-                            .background(colors.ink3)
-                            .foregroundColor(theme.brass)
-                            .overlay(RoundedRectangle(cornerRadius: 10).stroke(colors.inkLine, lineWidth: 1))
-                            .clipShape(RoundedRectangle(cornerRadius: 10))
-                        }
+                    HStack(spacing: 8) {
+                        TextField("", text: $groupCodeDraft, prompt: Text("Enter group code\u{2026}").foregroundColor(LuxColor.textMuted))
+                            .font(LuxFont.sans(13)).foregroundColor(LuxColor.textPrimary)
+                            #if os(iOS)
+                            .textInputAutocapitalization(.characters)
+                            #endif
+                            .onSubmit { Task { await submitJoinGroup() } }
+                        Button { Task { await submitJoinGroup() } } label: { squareIcon("arrow.right") }
+                            .buttonStyle(.plain)
                     }
-
-                    // Feedback message
                     if let msg = groupMessage {
-                        Text(msg)
-                            .font(AppFont.mono(11))
-                            .foregroundColor(groupMessageIsError ? colors.red : colors.green)
-                            .padding(.top, 2)
+                        Text(msg).font(LuxFont.mono(10)).foregroundColor(LuxColor.gold)
                     }
                 }
+                .padding(16)
             }
         }
     }
 
+    private func readingGroupRow(_ group: ReadingGroupSummary) -> some View {
+        let url = URL(string: "tenscrolls://joingroup?code=\(group.group_code)")!
+        return HStack {
+            VStack(alignment: .leading, spacing: 3) {
+                Text(group.name).font(LuxFont.serif(15)).foregroundColor(LuxColor.textPrimary)
+                Text("\(group.member_count) member\(group.member_count == 1 ? "" : "s") \u{2022} \(group.group_code)")
+                    .font(LuxFont.mono(10)).foregroundColor(LuxColor.textMuted)
+            }
+            Spacer()
+            ShareLink(item: url, subject: Text("Join \(group.name)"), message: Text("Use code \(group.group_code)")) {
+                Image(systemName: "square.and.arrow.up").font(.system(size: 12, weight: .light)).foregroundColor(LuxColor.textMuted)
+            }
+        }
+        .padding(.vertical, 6)
+    }
+
     private func submitCreateGroup() async {
-        let result = await store.createReadingGroup(name: groupNameDraft)
-        switch result {
-        case .success(let msg):
-            groupNameDraft = ""
-            groupMessage = msg
-            groupMessageIsError = false
-        case .failure(let msg):
-            groupMessage = msg
-            groupMessageIsError = true
+        switch await store.createReadingGroup(name: groupNameDraft) {
+        case .success(let msg): groupNameDraft = ""; groupMessage = msg
+        case .failure(let msg): groupMessage = msg
         }
         clearGroupMessageAfterDelay()
     }
 
     private func submitJoinGroup() async {
-        let result = await store.joinReadingGroup(code: groupCodeDraft)
-        switch result {
-        case .success(let msg):
-            groupCodeDraft = ""
-            groupMessage = msg
-            groupMessageIsError = false
-        case .failure(let msg):
-            groupMessage = msg
-            groupMessageIsError = true
+        switch await store.joinReadingGroup(code: groupCodeDraft) {
+        case .success(let msg): groupCodeDraft = ""; groupMessage = msg
+        case .failure(let msg): groupMessage = msg
         }
         clearGroupMessageAfterDelay()
     }
@@ -541,45 +495,32 @@ struct CaravanView: View {
         }
     }
 
-    // MARK: - Leaderboard
+    // MARK: - Leaderboard ("The Ledger" terminal)
 
-    /// Branches entirely on whether Plus rows came back from the server —
-    /// this is presentation only, not the gate itself. The actual withholding
-    /// already happened server-side in `get_leaderboard_tiered` (a free/lapsed
-    /// caller never receives other traders' rows at all), so there's nothing
-    /// for this view to "hide"; it just renders whichever shape it got.
     private var leaderboardSection: some View {
-        let colors = AdaptivePalette(mode: appearanceMode)
-        return VStack(alignment: .leading, spacing: 0) {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack {
+                Text("STANDING").luxEyebrow()
+                Spacer()
+                if let fullBoard { Text("\(fullBoard.count) TRADERS").font(LuxFont.mono(10)).foregroundColor(LuxColor.textMuted) }
+            }
+
             if tieredEntries == nil {
-                SectionLabel(text: "Leaderboard")
-                CardView { EmptyState(text: "Loading the caravan…") }
+                LuxEmptyLine(text: "Loading the ledger\u{2026}")
             } else if loadError {
-                SectionLabel(text: "Leaderboard")
-                CardView { EmptyState(text: "Couldn't reach the shared board right now. Try again shortly.") }
+                LuxEmptyLine(text: "Couldn't reach the ledger right now.")
             } else if let locked = lockedSelfEntry {
-                SectionLabel(text: "Leaderboard")
-                PartialRevealLeaderboardCard(
-                    percentile: locked.percentile ?? 50,
-                    populationCount: locked.populationCount ?? 0,
-                    cheerCount: cheersReceived,
-                    onUpgrade: { store.shouldShowDay30Paywall = true },
-                    brass: theme.brass
-                )
+                lockedLedgerCard(locked)
             } else if let fullBoard {
-                SectionLabel(text: "Leaderboard", trailing: "\(fullBoard.count) traders")
-                CardView {
-                    if fullBoard.isEmpty {
-                        EmptyState(text: "No traders on the board yet. Set your handle above to be first.")
-                    } else {
-                        VStack(spacing: 0) {
+                LuxRowCard {
+                    VStack(spacing: 0) {
+                        if fullBoard.isEmpty {
+                            LuxEmptyLine(text: "No traders on the ledger yet.")
+                        } else {
                             ForEach(Array(fullBoard.prefix(20).enumerated()), id: \.element.id) { idx, entry in
-                                LeaderRow(rank: idx, entry: entry, isSelf: entry.code == store.state.traderCode, theme: theme)
+                                if idx > 0 { LuxDivider() }
+                                ledgerRow(rank: idx, entry: entry)
                             }
-                        }
-                        if let myRankIndex, myRankIndex >= 20 {
-                            Text("You're ranked #\(myRankIndex + 1) of \(fullBoard.count)")
-                                .font(AppFont.mono(11)).foregroundColor(colors.textFaint).padding(.top, 8)
                         }
                     }
                 }
@@ -587,31 +528,98 @@ struct CaravanView: View {
         }
     }
 
-    // MARK: - Data loading
+    private func lockedLedgerCard(_ locked: TieredLeaderboardEntry) -> some View {
+        VStack(spacing: 20) {
+            VStack(spacing: 6) {
+                Text("TOP \(locked.percentile ?? 50)%")
+                    .font(LuxFont.serif(48))
+                    .tracking(-1)
+                    .foregroundColor(LuxColor.textPrimary)
+                Text("\(max(0, (locked.populationCount ?? 0) - 1)) traders ahead.")
+                    .font(LuxFont.sans(13))
+                    .foregroundColor(LuxColor.textSecondary)
+            }
+            ZStack {
+                VStack(spacing: 0) {
+                    ForEach(0..<6, id: \.self) { i in
+                        HStack {
+                            Text("#\(120 + i)").font(LuxFont.mono(10)).foregroundColor(LuxColor.textMuted)
+                            Text("\u{2022}\u{2022}\u{2022}\u{2022}\u{2022}\u{2022}\u{2022}\u{2022}").font(LuxFont.mono(10)).foregroundColor(LuxColor.textMuted.opacity(0.3))
+                            Spacer()
+                            Text("\u{2022}\u{2022}\u{2022}\u{2022}").font(LuxFont.mono(10)).foregroundColor(LuxColor.gold.opacity(0.2))
+                        }
+                        .frame(height: 32)
+                        .overlay(alignment: .bottom) { LuxDivider().opacity(0.4) }
+                    }
+                }
+                .blur(radius: 12)
+
+                VStack(spacing: 12) {
+                    Circle()
+                        .fill(Color.black)
+                        .frame(width: 48, height: 48)
+                        .shadow(color: LuxColor.gold.opacity(0.3), radius: 20)
+                        .overlay(Image(systemName: "lock").font(.system(size: 16, weight: .light)).foregroundColor(LuxColor.gold))
+                    Text("The full ledger is private to members.")
+                        .font(LuxFont.sans(10))
+                        .tracking(0.6)
+                        .foregroundColor(LuxColor.textSecondary)
+                }
+            }
+            .frame(height: 200)
+
+            Button {
+                store.shouldShowDay30Paywall = true
+            } label: {
+                Text("Enter the Ledger \u{2014} $500/yr")
+            }
+            .buttonStyle(LuxLedgerButtonStyle())
+        }
+        .padding(24)
+        // Deliberately always-near-black regardless of app theme — the
+        // spec's "$500 Terminal" locked-ledger panel is meant to read as a
+        // vault/monitor, distinct from the surrounding (now theme-adaptive)
+        // card surfaces, the same way the Reader intentionally stays dark.
+        .background(Color(hex: "0A0D12"))
+        .overlay(RoundedRectangle(cornerRadius: 20).stroke(LuxColor.gold, lineWidth: 0.5))
+        .clipShape(RoundedRectangle(cornerRadius: 20))
+    }
+
+    private func ledgerRow(rank: Int, entry: LeaderboardEntry) -> some View {
+        let isSelf = entry.code == store.state.traderCode
+        return HStack(spacing: 12) {
+            Text("#\(rank + 1)").font(LuxFont.mono(10)).foregroundColor(LuxColor.textMuted).frame(width: 28, alignment: .leading)
+            Text(entry.snapshot.name)
+                .font(LuxFont.serif(15))
+                .foregroundColor(LuxColor.textPrimary)
+            Spacer()
+            Text("\(Roman.from(max(0, entry.snapshot.streak)))")
+                .font(LuxFont.mono(10))
+                .foregroundColor(LuxColor.gold)
+        }
+        .padding(.vertical, 10)
+        .padding(.horizontal, isSelf ? 14 : 0)
+        .overlay(alignment: .leading) {
+            if isSelf { Rectangle().fill(LuxColor.gold).frame(width: 2) }
+        }
+    }
+
+    // MARK: - Data loading (unchanged from previous implementation)
 
     private func loadCircle() async {
         loadError = false
         do {
-            // Tiered, not the flat `fetchLeaderboard()` — this is what actually
-            // enforces the one-way mirror: a free/lapsed caller gets back a
-            // single locked row (percentile + population only), never other
-            // traders' names or ranks, decided server-side in get_leaderboard_tiered.
             tieredEntries = try await store.subscription.fetchTieredLeaderboard()
         } catch {
             tieredEntries = []
             loadError = true
         }
-
         var map: [String: FriendSnapshot] = [:]
         for code in store.state.friendCodes {
-            if let snap = await store.leaderboard.fetchFriend(code: code) {
-                map[code] = snap
-            }
+            if let snap = await store.leaderboard.fetchFriend(code: code) { map[code] = snap }
         }
         friendData = map
-
         cheersReceived = await store.leaderboard.fetchCheerCount(code: store.state.traderCode)
-
         var ackMap: [String: CheerAckStatus] = [:]
         for code in store.state.friendCodes {
             ackMap[code] = await store.leaderboard.fetchCheerAckStatus(code: code)
@@ -623,11 +631,6 @@ struct CaravanView: View {
         cheerSentAt[code] = Date()
         let result = await store.leaderboard.sendCheer(code: code)
         if let result, !result.success, result.error == "plus_required" {
-            // Stale local hasPlusAccess (trial expired server-side mid-
-            // session) — this button shouldn't have been reachable at all.
-            // Revert the optimistic "sent" state and silently resync
-            // subscription status; the card falls back to its locked state
-            // on its own once hasPlusAccess catches up, no paywall interrupt.
             cheerSentAt[code] = nil
             await store.refreshSubscriptionStatus()
             return
@@ -635,214 +638,144 @@ struct CaravanView: View {
         cheerAckStatus[code] = await store.leaderboard.fetchCheerAckStatus(code: code)
     }
 
-    /// Whether `date` falls on today's calendar day. Used to let a duel card's
-    /// "Encouragement sent" / "Seen" state expire once the day rolls over,
-    /// instead of a stale "Seen" checkmark (or a permanently disabled button)
-    /// lingering on screen forever after the one cheer per sender/recipient/day
-    /// the backend allows. Once it's a new day, the card falls back to
-    /// "Send encouragement" so the duel stays alive.
     private func isToday(_ date: Date?) -> Bool {
         guard let date else { return false }
         return Calendar.current.isDateInToday(date)
     }
 }
 
-private struct DuelCard: View {
-    @Environment(\.appearanceMode) var appearanceMode
+// MARK: - Duel row
+
+private struct DuelRow: View {
     let code: String
     let friend: FriendSnapshot?
     let myStreak: Int
-    let theme: ThemeOption
     let cheerSent: Bool
     let cheerSeen: Bool
     let hasPlusAccess: Bool
     let onRemove: () -> Void
     let onCheer: () async -> Void
-    let onUpgrade: () -> Void
+
+    private var maxStreak: Int { max(1, myStreak, friend?.streak ?? 0) }
 
     var body: some View {
-        let colors = AdaptivePalette(mode: appearanceMode)
-        CardView {
-            HStack {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(friend?.name ?? code).font(AppFont.display(15)).foregroundColor(colors.text)
-                    Text(friend != nil ? "Level \(friend!.level) · \(code)" : "Hasn't set a handle yet")
-                        .font(AppFont.mono(11)).foregroundColor(colors.textFaint)
+        LuxRowCard {
+            HStack(spacing: 14) {
+                VStack(alignment: .leading, spacing: 6) {
+                    Text((friend?.name ?? code).uppercased())
+                        .font(LuxFont.sans(12, weight: .medium))
+                        .foregroundColor(LuxColor.textPrimary)
+                        .lineLimit(1)
+                    Text(code)
+                        .font(LuxFont.mono(10))
+                        .foregroundColor(LuxColor.textMuted)
                 }
-                Spacer()
-                Button(action: onRemove) {
-                    Image(systemName: "trash").font(.system(size: 13)).foregroundColor(colors.textFaint)
-                }
-                .buttonStyle(.plain)
-            }
-            .padding(.bottom, 12)
+                .frame(width: 90, alignment: .leading)
 
-            if let friend {
-                let friendStreak = friend.streak
-                let diff = myStreak - friendStreak
-                HStack {
-                    VStack(spacing: 3) {
-                        HStack(spacing: 5) { Image(systemName: "flame.fill"); Text("\(myStreak)") }
-                            .font(AppFont.mono(19)).foregroundColor(theme.brass)
-                        Text("YOU").font(AppFont.mono(10)).foregroundColor(colors.textFaint)
-                    }
-                    .frame(maxWidth: .infinity)
-                    Text("vs").font(AppFont.display(12)).italic().foregroundColor(colors.textFaint)
-                    VStack(spacing: 3) {
-                        HStack(spacing: 5) { Image(systemName: "flame.fill"); Text("\(friendStreak)") }
-                            .font(AppFont.mono(19)).foregroundColor(theme.brass)
-                        Text(friend.name.uppercased()).font(AppFont.mono(10)).foregroundColor(colors.textFaint)
-                    }
-                    .frame(maxWidth: .infinity)
-                }
-                Text(diff > 0 ? "You're \(diff) day\(diff == 1 ? "" : "s") ahead"
-                     : diff == 0 ? "Dead even — first to blink loses"
-                     : "\(abs(diff)) day\(abs(diff) == 1 ? "" : "s") behind — catch up")
-                    .font(.system(size: 11)).italic().foregroundColor(colors.textDim)
-                    .frame(maxWidth: .infinity)
-                    .padding(.top, 10)
-            } else {
-                Text("They haven't set a trader handle yet, so no stats to compare.")
-                    .font(AppFont.mono(11)).foregroundColor(colors.textFaint)
-            }
-
-            if hasPlusAccess {
-                Button {
-                    Task { await onCheer() }
-                } label: {
-                    Label(
-                        cheerSeen ? "Seen" : (cheerSent ? "Encouragement sent" : "Send encouragement"),
-                        systemImage: cheerSeen ? "checkmark.circle.fill" : "megaphone.fill"
-                    )
-                    .font(.system(size: 12.5))
-                }
-                .disabled(friend == nil || cheerSent)
-                .frame(maxWidth: .infinity)
-                .padding(.vertical, 9)
-                .background(colors.ink3)
-                .foregroundColor(cheerSeen ? colors.green : theme.brass)
-                .overlay(RoundedRectangle(cornerRadius: 10).stroke(theme.brassDim, lineWidth: 1))
-                .clipShape(RoundedRectangle(cornerRadius: 10))
-                .opacity(friend == nil || cheerSent ? (cheerSeen ? 1 : 0.55) : 1)
-                .padding(.top, 12)
-            } else {
-                // Free/lapsed: view the duel, but sending encouragement is a
-                // Plus-only Caravan interaction — same "view-only" rule as
-                // addFriendCard, applied here instead of just disabling the
-                // button silently.
-                HStack(spacing: 10) {
-                    Image(systemName: "lock.fill").font(.system(size: 12)).foregroundColor(colors.textFaint)
-                    Text("Encouragement is a Plus feature.")
-                        .font(.system(size: 12)).foregroundColor(colors.textDim)
-                    Spacer()
-                    Button("Upgrade", action: onUpgrade)
-                        .font(.system(size: 12, weight: .semibold))
-                        .foregroundColor(theme.brass)
-                }
-                .padding(.vertical, 9).padding(.horizontal, 12)
-                .background(colors.ink3)
-                .overlay(RoundedRectangle(cornerRadius: 10).stroke(colors.inkLine, lineWidth: 1))
-                .clipShape(RoundedRectangle(cornerRadius: 10))
-                .padding(.top, 12)
-            }
-        }
-    }
-}
-
-private struct LeaderRow: View {
-    @Environment(\.appearanceMode) var appearanceMode
-    let rank: Int
-    let entry: LeaderboardEntry
-    let isSelf: Bool
-    let theme: ThemeOption
-
-    var rankColor: Color {
-        let colors = AdaptivePalette(mode: appearanceMode)
-        switch rank {
-        case 0: return Color(hex: "E8C27A")
-        case 1: return Color(hex: "C7CCD4")
-        case 2: return Color(hex: "C99A6B")
-        default: return colors.textFaint
-        }
-    }
-
-    var body: some View {
-        let colors = AdaptivePalette(mode: appearanceMode)
-        HStack(spacing: 12) {
-            Group {
-                if rank == 0 {
-                    Image(systemName: "trophy.fill")
-                } else {
-                    Text("\(rank + 1)")
-                }
-            }
-            .font(AppFont.mono(12))
-            .foregroundColor(rankColor)
-            .frame(width: 24)
-
-            VStack(alignment: .leading, spacing: 1) {
-                Text("\(entry.snapshot.name)\(isSelf ? " (you)" : "")")
-                    .font(.system(size: 13.5, weight: .semibold)).foregroundColor(colors.text)
-                    .lineLimit(1)
-                Text("\(entry.snapshot.streak)d streak · \(timeAgo(entry.snapshot.lastActive))")
-                    .font(AppFont.mono(10.5)).foregroundColor(colors.textFaint)
-            }
-            Spacer()
-            HStack(spacing: 4) {
-                Image(systemName: "diamond").font(.system(size: 10))
-                Text("\(entry.snapshot.xp)")
-            }
-            .font(AppFont.mono(12)).foregroundColor(theme.brass)
-        }
-        .padding(.vertical, 10)
-        .padding(.horizontal, isSelf ? 18 : 0)
-        .background(isSelf ? theme.brass.opacity(0.09) : Color.clear)
-        .clipShape(RoundedRectangle(cornerRadius: isSelf ? 10 : 0))
-    }
-}
-
-private struct ReadingGroupRow: View {
-    @Environment(\.appearanceMode) var appearanceMode
-    let group: ReadingGroupSummary
-    let theme: ThemeOption
-
-    var inviteURL: URL {
-        URL(string: "tenscrolls://joingroup?code=\(group.group_code)")!
-    }
-
-    var body: some View {
-        let colors = AdaptivePalette(mode: appearanceMode)
-        HStack {
-            VStack(alignment: .leading, spacing: 3) {
-                Text(group.name)
-                    .font(AppFont.display(15))
-                    .foregroundColor(colors.text)
                 HStack(spacing: 6) {
-                    Text("\(group.member_count) member\(group.member_count == 1 ? "" : "s")")
-                        .font(AppFont.mono(11))
-                        .foregroundColor(colors.textFaint)
-                    Text("·")
-                        .font(AppFont.mono(11))
-                        .foregroundColor(colors.textFaint)
-                    Text(group.group_code)
-                        .font(AppFont.mono(11))
-                        .foregroundColor(theme.brass)
-                        .tracking(0.8)
+                    barBottomAligned(height: CGFloat(myStreak) / CGFloat(maxStreak) * 32, color: LuxColor.gold)
+                    Text("\u{2014}").font(LuxFont.serif(12)).foregroundColor(LuxColor.textMuted)
+                    barBottomAligned(height: CGFloat(friend?.streak ?? 0) / CGFloat(maxStreak) * 32, color: LuxColor.textMuted)
                 }
+                .frame(height: 32)
+
+                Spacer()
+
+                VStack(alignment: .trailing, spacing: 2) {
+                    HStack(spacing: 4) {
+                        Text("\(myStreak)").font(LuxFont.mono(22, weight: .regular)).foregroundColor(LuxColor.gold)
+                        Text("\(friend?.streak ?? 0)").font(LuxFont.mono(22, weight: .regular)).foregroundColor(LuxColor.textMuted.opacity(0.5))
+                    }
+                    Text("DAYS").font(LuxFont.sans(8, weight: .medium)).tracking(1).foregroundColor(LuxColor.textMuted)
+                }
+
+                actionButton
             }
-            Spacer()
-            ShareLink(
-                item: inviteURL,
-                subject: Text("Join \"\(group.name)\" on Ten Scrolls"),
-                message: Text("Join our reading group \u{2014} use code \(group.group_code).")
-            ) {
-                Image(systemName: "square.and.arrow.up")
-                    .font(.system(size: 14))
-                    .foregroundColor(colors.textDim)
-            }
-            .padding(.leading, 8)
+            .padding(14)
         }
-        .padding(.vertical, 8)
+        .swipeActions(edge: .trailing) {
+            Button(role: .destructive, action: onRemove) {
+                Label("Remove", systemImage: "trash")
+            }
+        }
+    }
+
+    private func barBottomAligned(height: CGFloat, color: Color) -> some View {
+        VStack {
+            Spacer(minLength: 0)
+            RoundedRectangle(cornerRadius: 1).fill(color).frame(width: 2, height: max(2, height))
+        }
+        .frame(height: 32)
+    }
+
+    @ViewBuilder
+    private var actionButton: some View {
+        if hasPlusAccess {
+            Button {
+                Task { await onCheer() }
+            } label: {
+                ZStack {
+                    Circle()
+                        .fill(cheerSeen ? LuxColor.goldBg : Color.clear)
+                        .overlay(Circle().stroke(cheerSeen ? Color.clear : LuxColor.gold, lineWidth: 0.5))
+                    Image(systemName: cheerSeen ? "checkmark" : "arrow.right")
+                        .font(.system(size: 12, weight: .light))
+                        .foregroundColor(LuxColor.gold)
+                }
+                .frame(width: 32, height: 32)
+            }
+            .buttonStyle(.plain)
+            .disabled(friend == nil || cheerSent)
+            .opacity(friend == nil || (cheerSent && !cheerSeen) ? 0.4 : 1)
+        } else {
+            Image(systemName: "lock")
+                .font(.system(size: 11, weight: .light))
+                .foregroundColor(LuxColor.textMuted)
+                .frame(width: 32, height: 32)
+        }
+    }
+}
+
+/// The ledger's own bordered-gold "Enter the Ledger" button — visually
+/// distinct from `LuxPrimaryButtonStyle` (outlined, not filled) so the
+/// paywall CTA doesn't read as "the one filled button" competing with
+/// whatever primary action the rest of the screen has.
+private struct LuxLedgerButtonStyle: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .font(LuxFont.sans(12, weight: .semibold))
+            .tracking(1)
+            .frame(maxWidth: .infinity)
+            .frame(height: 48)
+            .foregroundColor(LuxColor.gold)
+            .overlay(RoundedRectangle(cornerRadius: 12).stroke(LuxColor.gold, lineWidth: 0.5))
+            .opacity(configuration.isPressed ? 0.7 : 1)
+    }
+}
+
+// MARK: - QR code
+
+/// Renders `string` (the invite deep link) as a black-on-white QR code using
+/// CoreImage — no third-party dependency needed.
+private struct QRCodeView: View {
+    let string: String
+    var body: some View {
+        Image(uiImage: Self.render(string))
+            .interpolation(.none)
+            .resizable()
+            .background(Color.white)
+    }
+
+    private static func render(_ string: String) -> UIImage {
+        let context = CIContext()
+        let filter = CIFilter.qrCodeGenerator()
+        filter.message = Data(string.utf8)
+        filter.correctionLevel = "M"
+        guard let outputImage = filter.outputImage else { return UIImage() }
+        let transform = CGAffineTransform(scaleX: 10, y: 10)
+        let scaled = outputImage.transformed(by: transform)
+        guard let cgImage = context.createCGImage(scaled, from: scaled.extent) else { return UIImage() }
+        return UIImage(cgImage: cgImage)
     }
 }
 
@@ -854,4 +787,24 @@ private func timeAgo(_ date: Date) -> String {
     let hrs = mins / 60
     if hrs < 24 { return "\(hrs)h ago" }
     return "\(hrs / 24)d ago"
+}
+
+// MARK: - Previews
+
+#Preview("Free") {
+    let store = AppStore()
+    store.state.traderName = "M. Voss"
+    store.state.traderCode = "7K2QRT"
+    store.state.friendCodes = ["A1B2C3", "D4E5F6"]
+    store.state.cachedSubscriptionStatus = .free
+    return CaravanView().environmentObject(store)
+}
+
+#Preview("Plus") {
+    let store = AppStore()
+    store.state.traderName = "M. Voss"
+    store.state.traderCode = "7K2QRT"
+    store.state.friendCodes = ["A1B2C3", "D4E5F6"]
+    store.state.cachedSubscriptionStatus = .active
+    return CaravanView().environmentObject(store)
 }

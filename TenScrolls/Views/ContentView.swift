@@ -99,6 +99,14 @@ struct ContentView: View {
                               openScroll: { scroll in attemptOpenScroll(scroll) })
                         .hideNavigationBar()
                 }
+                // Today/Scrolls/Journal/Caravan/Progress (the Lux rebuild)
+                // now read `LuxColor`, which is itself a dynamic `Color` —
+                // see the doc comment on `enum LuxColor` in AppTheme.swift.
+                // No `.preferredColorScheme` override needed here: the
+                // app-wide one set at the WindowGroup root (from the
+                // Appearance picker in Settings) already reaches this tab's
+                // content *and* its system-drawn chrome (keyboard,
+                // `.confirmationDialog`, status bar) consistently.
                 .tabItem { Label("Today", systemImage: "sunrise") }
                 .tag(0)
 
@@ -189,6 +197,20 @@ struct ContentView: View {
                 MilestoneCelebrationView(milestone: milestone)
                     .injectAppearanceMode(store.state.appearanceMode)
             }
+        }
+        // Day-complete celebration — fires the moment the third session of the
+        // day is stamped (see `AppStore.toggleSession`). Presented after the
+        // milestone cover in this chain so a streak milestone and a day-complete
+        // on the same tap don't fight; SwiftUI queues the second fullScreenCover
+        // to appear once the first is dismissed.
+        .fullScreenCover(
+            isPresented: Binding(
+                get: { store.dayComplete },
+                set: { if !$0 { store.dayComplete = false } }
+            )
+        ) {
+            DayCompleteView()
+                .injectAppearanceMode(store.state.appearanceMode)
         }
         // Day 3 trial offer — fires the moment `checkEngagementMilestones()`
         // sees 3 consecutive completed days (from `toggleSession`) or on
@@ -293,12 +315,19 @@ struct ContentView: View {
                 activeSheet = nil
             }
         case .scrollEditor(let scroll):
-            ScrollEditorSheet(scroll: scroll, onSave: { updated in
-                store.saveScroll(updated)
-                activeSheet = nil
-            }, onReadingStarted: {
-                store.recordReadingStarted()
-            })
+            // Route through the Lux $500-club reader. For locked scrolls that
+            // have no content yet, ScrollReaderView immediately shows its empty
+            // state with a pencil shortcut — same behaviour as before, without
+            // the old AdaptivePalette chrome.
+            ScrollReaderView(
+                scroll: scroll,
+                onSave: { updated in
+                    store.saveScroll(updated)
+                },
+                onReadingStarted: {
+                    store.recordReadingStarted()
+                }
+            )
         case .info:
             InfoSheet()
         case .notifSettings:

@@ -18,6 +18,177 @@ struct CardView<Content: View>: View {
     }
 }
 
+// MARK: - Sacred container
+
+/// A quieter, more spacious card for the ritual layer of Today — the active
+/// scroll and the day's journey. Deliberately lighter chrome than `CardView`
+/// (no stroke) so the reading moment doesn't compete visually with the
+/// system UI (XP, seals, habits) that sits below it.
+struct SacredCard<Content: View>: View {
+    @Environment(\.appearanceMode) var appearanceMode
+    let content: Content
+    init(@ViewBuilder content: () -> Content) {
+        self.content = content()
+    }
+    var body: some View {
+        let colors = AdaptivePalette(mode: appearanceMode)
+        VStack(alignment: .center, spacing: 0) { content }
+            .frame(maxWidth: .infinity)
+            .padding(.horizontal, 20)
+            .padding(.vertical, 24)
+            .background(colors.ink2.opacity(0.6))
+            .clipShape(RoundedRectangle(cornerRadius: 22))
+    }
+}
+
+/// A small ornamental divider marking the boundary between the Sacred layer
+/// (the ritual — reading) and the System layer (XP, seals, habits) below it.
+struct RitualDivider: View {
+    @Environment(\.appearanceMode) var appearanceMode
+    let label: String
+    var body: some View {
+        let colors = AdaptivePalette(mode: appearanceMode)
+        HStack(spacing: 10) {
+            Rectangle().fill(colors.inkLine).frame(height: 1)
+            Text(label.uppercased())
+                .font(AppFont.mono(10))
+                .tracking(2)
+                .foregroundColor(colors.textFaint)
+                .fixedSize()
+            Rectangle().fill(colors.inkLine).frame(height: 1)
+        }
+        .padding(.vertical, 4)
+    }
+}
+
+// MARK: - Day journey (dawn / midday / dusk as a single path)
+
+/// Replaces three disconnected stamp circles with one horizontal path the
+/// day travels along — sunrise to moon, with the three sessions as waypoints.
+/// Shows a live "opens in…" / "…left" countdown instead of a bare "Soon",
+/// and a caption describing where the day stands right now.
+struct DayJourneyPath: View {
+    @Environment(\.appearanceMode) var appearanceMode
+    let entry: DayEntry?
+    let customPrefs: SessionWindowPrefs?
+    var brass: Color
+    var glow: Color
+    let onToggle: (Session) -> Void
+
+    private let nodeSize: CGFloat = 56
+    private let endcapSize: CGFloat = 20
+
+    private var doneCount: Int {
+        Session.allCases.filter { entry?.isCompleted(for: $0) ?? false }.count
+    }
+
+    var body: some View {
+        TimelineView(.periodic(from: .now, by: 60)) { context in
+            let colors = AdaptivePalette(mode: appearanceMode)
+            VStack(spacing: 12) {
+                GeometryReader { geo in
+                    let inset = endcapSize / 2
+                    let usable = geo.size.width - inset * 2
+                    ZStack(alignment: .leading) {
+                        Capsule()
+                            .fill(colors.ink3)
+                            .frame(height: 3)
+                            .padding(.horizontal, inset)
+
+                        Capsule()
+                            .fill(LinearGradient(colors: [brass.opacity(0.75), glow], startPoint: .leading, endPoint: .trailing))
+                            .frame(width: max(0, usable * (CGFloat(doneCount) / 3)), height: 3)
+                            .padding(.leading, inset)
+
+                        HStack(spacing: 0) {
+                            endcap("sunrise")
+                            Spacer()
+                            node(.dawn, now: context.date, colors: colors)
+                            Spacer()
+                            node(.midday, now: context.date, colors: colors)
+                            Spacer()
+                            node(.dusk, now: context.date, colors: colors)
+                            Spacer()
+                            endcap("moon.stars.fill")
+                        }
+                    }
+                }
+                .frame(height: nodeSize)
+
+                Text(journeyCaption(now: context.date))
+                    .font(AppFont.mono(11))
+                    .foregroundColor(colors.textFaint)
+                    .multilineTextAlignment(.center)
+            }
+        }
+    }
+
+    private func endcap(_ systemImage: String) -> some View {
+        let colors = AdaptivePalette(mode: appearanceMode)
+        return Image(systemName: systemImage)
+            .font(.system(size: 13))
+            .foregroundColor(colors.textFaint.opacity(0.6))
+            .frame(width: endcapSize, height: endcapSize)
+    }
+
+    private func node(_ session: Session, now: Date, colors: AdaptivePalette) -> some View {
+        let done = entry?.isCompleted(for: session) ?? false
+        let status = session.windowStatus(at: now, startedAt: entry?.startedAt(for: session), customPrefs: customPrefs)
+        let disabled = !done && status != .open && status != .grace
+
+        return Button {
+            onToggle(session)
+        } label: {
+            ZStack {
+                Circle()
+                    .fill(done
+                        ? AnyShapeStyle(RadialGradient(colors: [glow, brass], center: .init(x: 0.35, y: 0.3), startRadius: 2, endRadius: nodeSize / 2))
+                        : AnyShapeStyle(colors.ink2))
+                    .overlay(Circle().stroke(done ? brass : colors.inkLine.opacity(disabled ? 0.4 : 1), lineWidth: 2))
+                    .frame(width: nodeSize, height: nodeSize)
+                    .overlay(
+                        Image(systemName: session.systemImage)
+                            .font(.system(size: 20))
+                            .foregroundColor(done ? Color(hex: "1A1207") : (disabled ? colors.textFaint.opacity(0.5) : colors.textDim))
+                    )
+                    .shadow(color: done ? brass.opacity(0.35) : .clear, radius: 8)
+
+                if !done, status == .closed {
+                    VStack {
+                        Spacer()
+                        HStack {
+                            Spacer()
+                            Image(systemName: "xmark.circle.fill")
+                                .font(.system(size: 13))
+                                .foregroundColor(Color.red.opacity(0.7))
+                                .background(Circle().fill(colors.ink2).padding(-3))
+                        }
+                    }
+                    .frame(width: nodeSize, height: nodeSize)
+                }
+            }
+        }
+        .buttonStyle(.plain)
+        .disabled(disabled)
+        .opacity(disabled && status == .upcoming ? 0.5 : 1)
+    }
+
+    private func journeyCaption(now: Date) -> String {
+        guard let entry else { return "The journey begins at dawn." }
+        if entry.allComplete { return "The caravan rests — today is sealed." }
+        for session in Session.allCases where !entry.isCompleted(for: session) {
+            if let countdown = session.countdownText(at: now, customPrefs: customPrefs) {
+                return "\(session.label) \(countdown)"
+            }
+        }
+        switch doneCount {
+        case 0: return "The journey begins at dawn."
+        case 1: return "One session in. Keep moving."
+        default: return "Almost there — one more to go."
+        }
+    }
+}
+
 struct SectionLabel: View {
     @Environment(\.appearanceMode) var appearanceMode
     let text: String
@@ -51,95 +222,6 @@ struct EmptyState: View {
             .multilineTextAlignment(.center)
             .frame(maxWidth: .infinity)
             .padding(.vertical, 26)
-    }
-}
-
-// MARK: - Stamp button (dawn / midday / dusk)
-
-struct StampButton: View {
-    @Environment(\.appearanceMode) var appearanceMode
-    let label: String
-    let systemImage: String
-    let done: Bool
-    var brass: Color
-    var glow: Color
-    var windowStatus: SessionWindowStatus = .open
-    let action: () -> Void
-
-    private var isDisabled: Bool {
-        !done && windowStatus != .open && windowStatus != .grace
-    }
-    
-    private func statusColor(_ colors: AdaptivePalette) -> Color {
-        if done { return brass }
-        switch windowStatus {
-        case .open, .grace: return colors.textDim
-        case .upcoming: return colors.textFaint.opacity(0.5)
-        case .closed: return Color.red.opacity(0.6)
-        }
-    }
-    
-    private var statusText: String? {
-        guard !done else { return nil }
-        switch windowStatus {
-        case .open, .grace: return nil
-        case .upcoming: return "Soon"
-        case .closed: return "Missed"
-        }
-    }
-
-    var body: some View {
-        let colors = AdaptivePalette(mode: appearanceMode)
-        VStack(spacing: 8) {
-            Button(action: action) {
-                ZStack {
-                    Circle()
-                        .fill(done
-                            ? AnyShapeStyle(RadialGradient(colors: [glow, brass], center: .init(x: 0.35, y: 0.3), startRadius: 2, endRadius: 34))
-                            : AnyShapeStyle(colors.ink2))
-                        .overlay(Circle().stroke(done ? brass : (isDisabled ? colors.inkLine.opacity(0.4) : colors.inkLine), lineWidth: done ? 2 : 2))
-                        .frame(width: 64, height: 64)
-                        .overlay(
-                            Image(systemName: systemImage)
-                                .font(.system(size: 22))
-                                .foregroundColor(done ? Color(hex: "1A1207") : statusColor(colors))
-                        )
-                        .shadow(color: done ? brass.opacity(0.35) : .clear, radius: 10)
-                    
-                    // Lock icon for unavailable sessions
-                    if isDisabled {
-                        VStack {
-                            Spacer()
-                            HStack {
-                                Spacer()
-                                Image(systemName: windowStatus == .closed ? "xmark.circle.fill" : "lock.fill")
-                                    .font(.system(size: 14))
-                                    .foregroundColor(statusColor(colors))
-                                    .background(Circle().fill(colors.ink2).padding(-4))
-                            }
-                        }
-                        .frame(width: 64, height: 64)
-                    }
-                }
-            }
-            .buttonStyle(.plain)
-            .disabled(isDisabled)
-            .opacity(isDisabled ? 0.6 : 1.0)
-            
-            VStack(spacing: 2) {
-                Text(label)
-                    .font(AppFont.mono(11))
-                    .tracking(0.6)
-                    .foregroundColor(colors.textDim)
-                
-                if let status = statusText {
-                    Text(status)
-                        .font(AppFont.mono(9))
-                        .foregroundColor(statusColor(colors))
-                }
-            }
-        }
-        .frame(maxWidth: .infinity)
     }
 }
 

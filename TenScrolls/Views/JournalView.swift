@@ -1,28 +1,55 @@
 import SwiftUI
 
+/// $500 Club rebuild of the Journal screen. Same public surface as before
+/// (`openJournal`, `openSearch`), same draft/publish/pin/delete/deep-link
+/// plumbing via `AppStore`.
 struct JournalView: View {
     @EnvironmentObject var store: AppStore
-    @Environment(\.appearanceMode) var appearanceMode
     var openJournal: () -> Void
     var openSearch: () -> Void
 
-    var theme: ThemeOption { Palette.theme(for: store.state.activeThemeId) }
+    private enum Filter: String, CaseIterable { case all = "All", starred = "Starred", reflections = "Reflections" }
+    @State private var filter: Filter = .all
 
-    var draftEntries: [JournalEntry] {
+    private var draftEntries: [JournalEntry] {
         store.state.journal.filter { $0.isDraft }
     }
 
-    var publishedEntries: [JournalEntry] {
-        store.state.journal.filter { !$0.isDraft }.sorted { $0.date > $1.date }
+    private var publishedEntries: [JournalEntry] {
+        let base = store.state.journal.filter { !$0.isDraft }.sorted { $0.date > $1.date }
+        switch filter {
+        case .all: return base
+        case .starred: return base.filter { $0.isPinnedForWidget }
+        case .reflections: return base.filter { $0.scrollId == nil && ($0.bookTitle ?? "").isEmpty }
+        }
+    }
+
+    /// Groups published entries into "Today" / "This Week" / "Earlier"
+    /// buckets, in that order, dropping empty buckets entirely.
+    private var groups: [(label: String, entries: [JournalEntry])] {
+        let today = DateKey.today()
+        let weekAgo = DateKey.add(-7, to: today)
+        var todayBucket: [JournalEntry] = []
+        var weekBucket: [JournalEntry] = []
+        var earlierBucket: [JournalEntry] = []
+        for entry in publishedEntries {
+            if entry.date == today { todayBucket.append(entry) }
+            else if entry.date > weekAgo { weekBucket.append(entry) }
+            else { earlierBucket.append(entry) }
+        }
+        var result: [(String, [JournalEntry])] = []
+        if !todayBucket.isEmpty { result.append(("Today", todayBucket)) }
+        if !weekBucket.isEmpty { result.append(("This Week", weekBucket)) }
+        if !earlierBucket.isEmpty { result.append(("Earlier", earlierBucket)) }
+        return result
     }
 
     var body: some View {
-        let colors = AdaptivePalette(mode: appearanceMode)
         ScrollViewReader { proxy in
             ScrollView {
-                journalContent(colors: colors)
+                content
             }
-            .background(colors.background)
+            .background(LuxColor.bg.ignoresSafeArea())
             .onAppear { scrollToPendingEntry(proxy: proxy) }
             .onChange(of: store.pendingJournalEntryId) { _, _ in
                 scrollToPendingEntry(proxy: proxy)
@@ -30,135 +57,114 @@ struct JournalView: View {
         }
     }
 
-    /// Scrolls to and (via `JournalEntryRow`'s `initiallyExpanded`) expands
-    /// the entry a Journal Reflection widget tap deep-linked to — see
-    /// `AppStore.pendingJournalEntryId`. The delay gives the just-selected
-    /// tab's rows a beat to lay out before `proxy.scrollTo` targets one.
     private func scrollToPendingEntry(proxy: ScrollViewProxy) {
         guard let id = store.pendingJournalEntryId else { return }
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
-            withAnimation {
-                proxy.scrollTo(id, anchor: .top)
-            }
+            withAnimation { proxy.scrollTo(id, anchor: .top) }
         }
         store.pendingJournalEntryId = nil
     }
 
     @ViewBuilder
-    private func journalContent(colors: AdaptivePalette) -> some View {
-            VStack(alignment: .leading, spacing: 10) {
-                HStack(alignment: .top) {
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text("\(publishedEntries.count) ENTRIES").font(AppFont.mono(11)).tracking(1.4).foregroundColor(theme.brass)
-                        Text("Journal").font(AppFont.display(28)).foregroundColor(colors.text)
-                    }
-                    Spacer()
-                    
-                    HStack(spacing: 12) {
-                        Button(action: openSearch) {
-                            Image(systemName: "magnifyingglass")
-                                .foregroundColor(colors.textDim)
-                                .frame(width: 36, height: 36)
-                                .background(Circle().fill(colors.ink2))
-                                .overlay(Circle().stroke(colors.inkLine, lineWidth: 1))
-                        }
-                        .buttonStyle(.plain)
-                        
-                        Button(action: openJournal) {
-                            Image(systemName: "plus")
-                                .foregroundColor(colors.textDim)
-                                .frame(width: 36, height: 36)
-                                .background(Circle().fill(colors.ink2))
-                                .overlay(Circle().stroke(colors.inkLine, lineWidth: 1))
-                        }
-                        .buttonStyle(.plain)
-                        
-                        Button(action: { store.addDraftEntry() }) {
-                            Image(systemName: "square.and.pencil")
-                                .foregroundColor(colors.textDim)
-                                .frame(width: 36, height: 36)
-                                .background(Circle().fill(colors.ink2))
-                                .overlay(Circle().stroke(colors.inkLine, lineWidth: 1))
-                        }
-                        .buttonStyle(.plain)
+    private var content: some View {
+        VStack(alignment: .leading, spacing: 24) {
+            header
+
+            filterChips
+
+            if !draftEntries.isEmpty {
+                VStack(alignment: .leading, spacing: 10) {
+                    Text("DRAFTS").luxEyebrow()
+                    ForEach(draftEntries) { entry in
+                        DraftEntryRow(
+                            entry: entry,
+                            scroll: store.state.scrolls.first(where: { $0.id == entry.scrollId }),
+                            onUpdate: { store.updateJournalEntry(entry.id, text: $0) },
+                            onPublish: { store.publishDraft(entry.id) },
+                            onDelete: { store.deleteJournalEntry(entry.id) }
+                        )
                     }
                 }
+            }
 
-                // Drafts Section
-                if !draftEntries.isEmpty {
-                    VStack(alignment: .leading, spacing: 8) {
-                        Text("DRAFTS")
-                            .font(AppFont.mono(10))
-                            .tracking(1.2)
-                            .foregroundColor(theme.brass.opacity(0.7))
-                            .padding(.top, 8)
-                        
-                        ForEach(draftEntries) { entry in
-                            DraftEntryRow(
-                                entry: entry,
-                                scroll: store.state.scrolls.first(where: { $0.id == entry.scrollId }),
-                                onUpdate: { newText in
-                                    store.updateJournalEntry(entry.id, text: newText)
-                                },
-                                onPublish: {
-                                    store.publishDraft(entry.id)
-                                },
-                                onDelete: {
-                                    store.deleteJournalEntry(entry.id)
-                                }
-                            )
-                        }
-                    }
-                }
-
-                // Published Entries Section
-                if !publishedEntries.isEmpty {
-                    VStack(alignment: .leading, spacing: 8) {
-                        if !draftEntries.isEmpty {
-                            Text("PUBLISHED")
-                                .font(AppFont.mono(10))
-                                .tracking(1.2)
-                                .foregroundColor(theme.brass.opacity(0.7))
-                                .padding(.top, 12)
-                        }
-                        
-                        ForEach(publishedEntries) { entry in
+            ForEach(groups, id: \.label) { group in
+                VStack(alignment: .leading, spacing: 10) {
+                    Text(group.label.uppercased()).luxEyebrow()
+                    VStack(spacing: 10) {
+                        ForEach(group.entries) { entry in
                             JournalEntryRow(
                                 entry: entry,
                                 scroll: store.state.scrolls.first(where: { $0.id == entry.scrollId }),
                                 initiallyExpanded: entry.id == store.pendingJournalEntryId,
-                                onDelete: {
-                                    store.deleteJournalEntry(entry.id)
-                                },
-                                onConvertToDraft: {
-                                    store.convertToDraft(entry.id)
-                                }
+                                onDelete: { store.deleteJournalEntry(entry.id) },
+                                onConvertToDraft: { store.convertToDraft(entry.id) },
+                                onTogglePin: { store.toggleJournalPinForWidget(entry.id) }
                             )
                             .id(entry.id)
                         }
                     }
                 }
-
-                if draftEntries.isEmpty && publishedEntries.isEmpty {
-                    EmptyState(text: "No reflections yet.\nTap + to write about today's practice or ✎ to start a draft.")
-                }
-                
-                Color.clear.frame(height: 10)
             }
-            .padding(.horizontal, 20)
-            .padding(.top, 10)
+
+            if draftEntries.isEmpty && publishedEntries.isEmpty {
+                LuxEmptyLine(text: "No reflections yet. Tap + to write about today's practice.", height: 80)
+            }
+        }
+        .padding(.horizontal, 20)
+        .padding(.top, 12)
+        .padding(.bottom, 120)
+    }
+
+    private var header: some View {
+        HStack(alignment: .top) {
+            VStack(alignment: .leading, spacing: 4) {
+                Text("\(Roman.from(max(0, publishedEntries.count))) ENTRIES").luxEyebrow()
+                Text("Journal")
+                    .font(LuxFont.serif(32))
+                    .tracking(-0.3)
+                    .foregroundColor(LuxColor.textPrimary)
+            }
+            Spacer()
+            HStack(spacing: 10) {
+                LuxIconButton(systemImage: "magnifyingglass", action: openSearch)
+                LuxIconButton(systemImage: "plus", action: openJournal)
+                LuxIconButton(systemImage: "square.and.pencil", action: { store.addDraftEntry() })
+            }
+        }
+    }
+
+    private var filterChips: some View {
+        HStack(spacing: 20) {
+            ForEach(Filter.allCases, id: \.self) { f in
+                Button {
+                    withAnimation(LuxMotion.standard) { filter = f }
+                } label: {
+                    VStack(spacing: 6) {
+                        Text(f.rawValue)
+                            .font(LuxFont.sans(10, weight: .medium))
+                            .tracking(1.2)
+                            .foregroundColor(filter == f ? LuxColor.textPrimary : LuxColor.textSecondary)
+                        Rectangle()
+                            .fill(filter == f ? LuxColor.gold : Color.clear)
+                            .frame(height: 1)
+                    }
+                }
+                .buttonStyle(.plain)
+            }
+            Spacer()
+        }
     }
 }
 
+// MARK: - Draft row
+
 private struct DraftEntryRow: View {
-    @Environment(\.appearanceMode) var appearanceMode
     let entry: JournalEntry
     let scroll: Scroll?
     let onUpdate: (String) -> Void
     let onPublish: () -> Void
     let onDelete: () -> Void
     @State private var editedText: String
-    @State private var isEditing = false
     @State private var showDeleteConfirmation = false
     @FocusState private var isFocused: Bool
 
@@ -172,162 +178,121 @@ private struct DraftEntryRow: View {
     }
 
     var body: some View {
-        let colors = AdaptivePalette(mode: appearanceMode)
-        VStack(alignment: .leading, spacing: 8) {
-            HStack {
-                Text("DRAFT · Scroll \(scroll?.roman ?? "—")")
-                    .font(AppFont.mono(10.5))
-                    .foregroundColor(colors.textFaint)
-                Spacer()
-                
-                HStack(spacing: 12) {
-                    if !editedText.isEmpty {
-                        Button(action: {
-                            onPublish()
-                        }) {
-                            Image(systemName: "checkmark.circle")
-                                .font(.system(size: 16))
-                                .foregroundColor(Palette.theme(for: "default").brass)
+        LuxCard(cornerRadius: 16, showsNoise: false) {
+            VStack(alignment: .leading, spacing: 10) {
+                HStack {
+                    Text("DRAFT \u{00B7} Scroll \(scroll?.roman ?? "\u{2014}")")
+                        .font(LuxFont.mono(9))
+                        .foregroundColor(LuxColor.textMuted)
+                    Spacer()
+                    if !editedText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                        Button(action: onPublish) {
+                            Image(systemName: "checkmark.circle").foregroundColor(LuxColor.gold)
                         }
                         .buttonStyle(.plain)
                     }
                 }
+                TextEditor(text: $editedText)
+                    .font(LuxFont.sans(13))
+                    .foregroundColor(LuxColor.textPrimary)
+                    .scrollContentBackground(.hidden)
+                    .frame(minHeight: 80)
+                    .focused($isFocused)
+                    .onChange(of: editedText) { _, newValue in onUpdate(newValue) }
+                    .onAppear { if entry.text.isEmpty { isFocused = true } }
             }
-            .contentShape(Rectangle())
-            .contextMenu {
-                Button(role: .destructive) {
-                    showDeleteConfirmation = true
-                } label: {
-                    Label("Delete Draft", systemImage: "trash")
-                }
-            }
-            .confirmationDialog(
-                "Delete this draft?",
-                isPresented: $showDeleteConfirmation,
-                titleVisibility: .visible
-            ) {
-                Button("Delete", role: .destructive) { onDelete() }
-                Button("Cancel", role: .cancel) {}
-            } message: {
-                Text("This can't be undone.")
-            }
-            
-            TextEditor(text: $editedText)
-                .font(.system(size: 13.5))
-                .foregroundColor(colors.text)
-                .scrollContentBackground(.hidden)
-                .background(colors.ink2)
-                .frame(minHeight: 80)
-                .focused($isFocused)
-                .onChange(of: editedText) { _, newValue in
-                    onUpdate(newValue)
-                }
-                .onAppear {
-                    if entry.text.isEmpty {
-                        isFocused = true
-                    }
-                }
         }
-        .padding(14)
-        .background(colors.ink2)
-        .overlay(RoundedRectangle(cornerRadius: 14).stroke(Palette.theme(for: "default").brass.opacity(0.4), lineWidth: 1.5))
-        .clipShape(RoundedRectangle(cornerRadius: 14))
+        .overlay(RoundedRectangle(cornerRadius: 16).stroke(LuxColor.goldMuted.opacity(0.4), lineWidth: 0.5))
+        .contextMenu {
+            Button(role: .destructive) { showDeleteConfirmation = true } label: {
+                Label("Delete Draft", systemImage: "trash")
+            }
+        }
+        .confirmationDialog("Delete this draft?", isPresented: $showDeleteConfirmation, titleVisibility: .visible) {
+            Button("Delete", role: .destructive) { onDelete() }
+            Button("Cancel", role: .cancel) {}
+        }
     }
 }
 
+// MARK: - Entry row
+
 private struct JournalEntryRow: View {
-    @Environment(\.appearanceMode) var appearanceMode
-    @EnvironmentObject var store: AppStore
     let entry: JournalEntry
     let scroll: Scroll?
     let onDelete: () -> Void
     let onConvertToDraft: () -> Void
+    let onTogglePin: () -> Void
     @State private var expanded: Bool
     @State private var showDeleteConfirmation = false
 
-    /// `true` when this row should start expanded — set when a Journal
-    /// Reflection widget tap deep-linked straight to this entry (see
-    /// `AppStore.pendingJournalEntryId`). Only affects the row's initial
-    /// state; the reader's own taps still toggle `expanded` freely afterward.
-    init(entry: JournalEntry, scroll: Scroll?, initiallyExpanded: Bool = false, onDelete: @escaping () -> Void, onConvertToDraft: @escaping () -> Void) {
+    init(entry: JournalEntry, scroll: Scroll?, initiallyExpanded: Bool = false, onDelete: @escaping () -> Void, onConvertToDraft: @escaping () -> Void, onTogglePin: @escaping () -> Void) {
         self.entry = entry
         self.scroll = scroll
         self.onDelete = onDelete
         self.onConvertToDraft = onConvertToDraft
+        self.onTogglePin = onTogglePin
         _expanded = State(initialValue: initiallyExpanded)
     }
 
-    /// "Scroll IV", a book title, or an em dash when the entry has neither —
-    /// a plain journal reflection with no reading attached.
     private var sourceLabel: String {
-        if let bookTitle = entry.bookTitle, !bookTitle.isEmpty { return bookTitle }
-        if let scroll { return "Scroll \(scroll.roman)" }
-        return "—"
+        if let bookTitle = entry.bookTitle, !bookTitle.isEmpty { return bookTitle.uppercased() }
+        if let scroll { return "SCROLL \(scroll.roman)" }
+        return "REFLECTION"
+    }
+
+    /// Never surfaces a raw URL or email address in the preview — swaps
+    /// either for a bracketed placeholder instead.
+    private var sanitizedPreview: String {
+        var text = entry.text
+        if text.range(of: #"https?://\S+"#, options: .regularExpression) != nil {
+            text = text.replacingOccurrences(of: #"https?://\S+"#, with: "[Link]", options: .regularExpression)
+        }
+        if text.range(of: #"[\w.+-]+@[\w-]+\.[\w.-]+"#, options: .regularExpression) != nil {
+            text = text.replacingOccurrences(of: #"[\w.+-]+@[\w-]+\.[\w.-]+"#, with: "[Letter]", options: .regularExpression)
+        }
+        return text
     }
 
     var body: some View {
-        let colors = AdaptivePalette(mode: appearanceMode)
-        VStack(alignment: .leading, spacing: 8) {
-            HStack(spacing: 5) {
-                if entry.isPinnedForWidget {
-                    Image(systemName: "star.fill")
-                        .font(.system(size: 9))
-                        .foregroundColor(Palette.theme(for: store.state.activeThemeId).brass)
+        LuxRowCard(cornerRadius: 16) {
+            VStack(alignment: .leading, spacing: 8) {
+                HStack {
+                    Text("\(DateKey.short(entry.date).uppercased()) \u{2022} \(sourceLabel)")
+                        .font(LuxFont.mono(9))
+                        .foregroundColor(LuxColor.textMuted)
+                    Spacer()
+                    Image(systemName: entry.isPinnedForWidget ? "star.fill" : "star")
+                        .font(.system(size: 11, weight: .light))
+                        .foregroundColor(entry.isPinnedForWidget ? LuxColor.gold : LuxColor.textMuted)
                 }
-                Text("\(DateKey.short(entry.date)) · \(sourceLabel)")
-                    .font(AppFont.mono(10.5)).foregroundColor(colors.textFaint)
-                Spacer()
-                Image(systemName: "chevron.down")
-                    .font(.system(size: 10, weight: .semibold))
-                    .foregroundColor(colors.textFaint)
-                    .rotationEffect(.degrees(expanded ? 180 : 0))
+                Text(sanitizedPreview)
+                    .font(LuxFont.sans(14))
+                    .foregroundColor(LuxColor.textSecondary)
+                    .lineSpacing(4)
+                    .lineLimit(expanded ? nil : 2)
             }
-            Text(entry.text)
-                .font(.system(size: 13.5))
-                .foregroundColor(colors.text)
-                .lineSpacing(4)
-                .lineLimit(expanded ? nil : 1)
-                .truncationMode(.tail)
+            .padding(16)
+            .frame(minHeight: 80, alignment: .topLeading)
         }
-        .padding(14)
-        .background(colors.ink2)
-        .overlay(RoundedRectangle(cornerRadius: 14).stroke(colors.inkLine, lineWidth: 1))
-        .clipShape(RoundedRectangle(cornerRadius: 14))
         .contentShape(Rectangle())
         .onTapGesture {
-            withAnimation(.easeInOut(duration: 0.2)) { expanded.toggle() }
+            withAnimation(LuxMotion.standard) { expanded.toggle() }
         }
         .contextMenu {
-            Button {
-                store.toggleJournalPinForWidget(entry.id)
-            } label: {
-                Label(
-                    entry.isPinnedForWidget ? "Remove from Widget" : "Feature in Widget",
-                    systemImage: entry.isPinnedForWidget ? "star.slash" : "star"
-                )
+            Button(action: onTogglePin) {
+                Label(entry.isPinnedForWidget ? "Remove from Widget" : "Feature in Widget", systemImage: entry.isPinnedForWidget ? "star.slash" : "star")
             }
-
-            Button {
-                onConvertToDraft()
-            } label: {
+            Button(action: onConvertToDraft) {
                 Label("Edit", systemImage: "pencil")
             }
-            
-            Button(role: .destructive) {
-                showDeleteConfirmation = true
-            } label: {
+            Button(role: .destructive) { showDeleteConfirmation = true } label: {
                 Label("Delete", systemImage: "trash")
             }
         }
-        .confirmationDialog(
-            "Delete this entry?",
-            isPresented: $showDeleteConfirmation,
-            titleVisibility: .visible
-        ) {
+        .confirmationDialog("Delete this entry?", isPresented: $showDeleteConfirmation, titleVisibility: .visible) {
             Button("Delete", role: .destructive) { onDelete() }
             Button("Cancel", role: .cancel) {}
-        } message: {
-            Text("This can't be undone.")
         }
     }
 }

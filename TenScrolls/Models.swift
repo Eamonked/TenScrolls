@@ -253,6 +253,36 @@ enum Session: String, Codable, CaseIterable, Identifiable {
         guard base == .closed else { return base }
         return isMarkable(at: date, startedAt: startedAt, customPrefs: customPrefs) ? .grace : .closed
     }
+
+    /// A short, human countdown for the Today ritual UI — "opens in 2h 14m" while
+    /// upcoming, "45m left" while the window is open. Returns nil once a session
+    /// is in grace or closed, where a countdown no longer means anything useful
+    /// and the status icon speaks for itself instead.
+    func countdownText(at date: Date = Date(), customPrefs: SessionWindowPrefs? = nil) -> String? {
+        let window = timeWindow(customPrefs: customPrefs)
+        switch windowStatus(at: date, customPrefs: customPrefs) {
+        case .upcoming:
+            let target = window.startDate(anchoredTo: date)
+            return "opens in \(Session.formatCountdownInterval(target.timeIntervalSince(date)))"
+        case .open:
+            let target = window.endDate(anchoredTo: date)
+            let remaining = target.timeIntervalSince(date)
+            guard remaining > 0 else { return nil }
+            return "\(Session.formatCountdownInterval(remaining)) left"
+        case .grace, .closed:
+            return nil
+        }
+    }
+
+    private static func formatCountdownInterval(_ seconds: TimeInterval) -> String {
+        let totalMinutes = max(0, Int(seconds / 60))
+        let hours = totalMinutes / 60
+        let minutes = totalMinutes % 60
+        if hours > 0 {
+            return minutes > 0 ? "\(hours)h \(minutes)m" : "\(hours)h"
+        }
+        return "\(minutes)m"
+    }
 }
 
 /// Time window configuration for a reading session
@@ -314,6 +344,16 @@ struct SessionTimeWindow {
         var components = calendar.dateComponents([.year, .month, .day], from: date)
         components.hour = end.hour
         components.minute = end.minute
+        return calendar.date(from: components) ?? date
+    }
+
+    /// This window's start time as a concrete Date on the same calendar day as
+    /// `date`. Used for the "opens in Xh Ym" countdown while a session is upcoming.
+    func startDate(anchoredTo date: Date) -> Date {
+        let calendar = Calendar.current
+        var components = calendar.dateComponents([.year, .month, .day], from: date)
+        components.hour = start.hour
+        components.minute = start.minute
         return calendar.date(from: components) ?? date
     }
     
@@ -585,4 +625,38 @@ enum Constants {
             state.habits.contains { state.habitStreak($0) >= 7 }
         },
     ]
+}
+
+// MARK: - Direct messages
+
+/// A single 1:1 direct message between the caller and a mutual friend.
+/// Decoded from the `fetch_direct_messages` RPC response — field names here
+/// must match its RETURNS TABLE columns exactly. `dm_id`/`sent_at` are
+/// deliberately distinct from the underlying `direct_messages` table's own
+/// `id`/`created_at` columns (see migration 007's comment on why), so a
+/// name mismatch here would fail every decode silently, the same class of
+/// bug that broke `PendingScrollShare.shared_at` before.
+struct DirectMessage: Identifiable, Decodable, Equatable {
+    var id: UUID { dm_id }
+    let dm_id: UUID
+    let from_trader_code: String
+    let to_trader_code: String
+    let body: String
+    let sent_at: Date
+    let read_at: Date?
+    let is_mine: Bool
+}
+
+/// One row per mutual friend with an open (or possible) DM thread, for the
+/// Caravan tab's inbox list. Decoded from the `fetch_dm_threads` RPC
+/// response — every mutual friend appears here even with zero messages yet
+/// (`last_message`/`last_message_at`/`last_message_is_mine` nil in that case).
+struct DMThreadSummary: Identifiable, Decodable, Equatable {
+    var id: String { thread_trader_code }
+    let thread_trader_code: String
+    let thread_trader_name: String
+    let last_message: String?
+    let last_message_at: Date?
+    let last_message_is_mine: Bool?
+    let unread_count: Int
 }

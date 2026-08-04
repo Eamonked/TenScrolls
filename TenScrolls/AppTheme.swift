@@ -208,3 +208,140 @@ struct AdaptivePalette {
     var textFaint: Color { Palette.textFaint(for: mode) }
     var background: Color { Palette.background(for: mode) }
 }
+
+// MARK: - $500 Club — Lux Design System
+//
+// Additive design system for the rebuilt Today/Scrolls/Journal/Caravan/Reader
+// views. Deliberately namespaced under `Lux*` rather than replacing
+// `Palette`/`AppFont`/`AdaptivePalette` above — Library and PDF still read
+// those directly, and rewriting them wasn't in scope.
+//
+// Unlike `Palette`/`AdaptivePalette` (which need an explicit `mode` passed
+// in), every `LuxColor.*` token below is a *dynamic* `Color`: it resolves
+// itself to a light or dark value at render time from the active trait
+// collection, via `Color.lux(light:dark:)`. That trait collection is kept
+// in sync with `\.colorScheme`, which is in turn driven by the app's own
+// `AppearanceMode` — for `.light`/`.dark` via the root
+// `.preferredColorScheme(...)` set in `TenScrollsApp`, and for `.system` by
+// the live system appearance. Practically: nothing downstream needs to read
+// `\.appearanceMode` or thread a palette instance through — every call site
+// that already writes `LuxColor.gold`/`LuxColor.bg`/etc. just adapts.
+//
+// `ScrollReaderView` (the reading surface itself) is the one place that
+// can't lean on this trick alone — its body text is rendered inside a
+// `WKWebView` via `BookChapterWebView`, which builds its own HTML/CSS
+// string outside SwiftUI's environment entirely. That view reads
+// `\.appearanceMode` explicitly and threads the resolved mode through to
+// both the shared `AdaptivePalette`-based document chrome and
+// `ScrollReaderView.scrollHTML`'s own light/dark text-color literals, so
+// it adapts too — just via an explicit mode rather than a dynamic `Color`.
+private extension Color {
+    /// Builds a `Color` that resolves to `light` or `dark` at render time
+    /// based on the active appearance, rather than being fixed at
+    /// construction time like a plain `Color(hex:)` value.
+    static func lux(light: Color, dark: Color) -> Color {
+        #if canImport(UIKit)
+        return Color(uiColor: UIColor { traits in
+            traits.userInterfaceStyle == .dark ? UIColor(dark) : UIColor(light)
+        })
+        #elseif canImport(AppKit)
+        return Color(nsColor: NSColor(name: nil, dynamicProvider: { appearance in
+            appearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua ? NSColor(dark) : NSColor(light)
+        }))
+        #else
+        return dark
+        #endif
+    }
+}
+
+enum LuxColor {
+    static let bg = Color.lux(light: Color(hex: "FAF8F2"), dark: Color(hex: "05070A"))
+    static let card = Color.lux(light: Color(hex: "FFFFFF"), dark: Color(hex: "0F1218"))
+    static let cardBorder = Color.lux(light: Color(hex: "E5DFD1"), dark: Color(hex: "1C212E"))
+    /// The inner hairline along a card's top edge — a sliver of warm gold,
+    /// not a full stroke. Use with `.frame(height: 1)` pinned to the top.
+    static let hairlineTop = Color.lux(light: Color(hex: "AD8636"), dark: Color(hex: "C49A5C")).opacity(0.125)
+    static let textPrimary = Color.lux(light: Color(hex: "1B1712"), dark: Color(hex: "F5F2ED"))
+    static let textSecondary = Color.lux(light: Color(hex: "6C665A"), dark: Color(hex: "8A877E"))
+    static let textMuted = Color.lux(light: Color(hex: "AFA997"), dark: Color(hex: "4A4842"))
+    /// Brand gold — kept constant across both modes; it reads correctly on
+    /// both the near-black and parchment backgrounds.
+    static let gold = Color(hex: "D4AF37")
+    static let goldMuted = Color.lux(light: Color(hex: "6E5A2C"), dark: Color(hex: "8C7A4F"))
+    static let goldBg = Color(hex: "D4AF37").opacity(0.078)
+    /// Success state reuses gold — this palette has no green.
+    static let success = gold
+    static let divider = cardBorder.opacity(0.5)
+}
+
+/// Font helpers for the Lux system. Names point at Cormorant Garamond,
+/// Inter, and JetBrains Mono — add those families to the target (Info.plist
+/// `UIAppFonts` + the font files themselves) for the intended look.
+///
+/// None of those three are currently bundled in the project (no .ttf/.otf
+/// files, no `UIAppFonts` entry), so every call below was silently falling
+/// back to the system font anyway — but `Font.custom(name:size:).weight(_:)`
+/// still asked CoreText to synthesize a specific weight against a font
+/// descriptor for a family that doesn't exist. CoreText can't do that (this
+/// isn't a variable font, and there's no font there at all right now), so it
+/// logs "Unable to update Font Descriptor's weight ... please file a bug
+/// report" on every single call — that's the console spam. `resolved` below
+/// checks with `UIFont(name:size:)` whether the named face is actually
+/// present before deciding how to build the `Font`:
+///   - present  -> `.custom(name, size:)` with NO `.weight()` chained (the
+///                 weight is already baked into which named face was asked
+///                 for; chaining `.weight()` on a static face is exactly
+///                 what triggers the synthesis warning even when the font
+///                 IS bundled).
+///   - missing  -> `.system(size:weight:design:)`, where `.weight()` is
+///                 meaningful and produces no warning.
+/// Once real font files get added to the target, these calls will pick them
+/// up automatically — the exact PostScript names below (e.g. "Inter-Medium")
+/// need to match whatever the actual font files register as; check with
+/// `UIFont.fontNames(forFamilyName:)` once they're bundled.
+enum LuxFont {
+    private static func resolved(_ name: String, size: CGFloat, fallbackWeight: Font.Weight, design: Font.Design) -> Font {
+        #if canImport(UIKit)
+        if UIFont(name: name, size: size) != nil {
+            return .custom(name, size: size)
+        }
+        #endif
+        return .system(size: size, weight: fallbackWeight, design: design)
+    }
+
+    /// Cormorant Garamond Light, for titles. `tracking(-0.5)` at the call
+    /// site approximates the spec's -0.02em at typical title sizes.
+    static func serif(_ size: CGFloat, weight: Font.Weight = .light) -> Font {
+        resolved("CormorantGaramond-Light", size: size, fallbackWeight: weight, design: .serif)
+    }
+    /// Inter, for uppercase tracked labels (10pt) and regular body (13pt).
+    /// Weight is folded into the requested PostScript name since static
+    /// font files can't be reweighted after the fact.
+    static func sans(_ size: CGFloat, weight: Font.Weight = .regular) -> Font {
+        let name: String
+        switch weight {
+        case .semibold, .bold, .heavy, .black: name = "Inter-SemiBold"
+        case .medium: name = "Inter-Medium"
+        default: name = "Inter-Regular"
+        }
+        return resolved(name, size: size, fallbackWeight: weight, design: .default)
+    }
+    /// JetBrains Mono Light, for numbers/codes, tabular where the OS honors it.
+    static func mono(_ size: CGFloat, weight: Font.Weight = .light) -> Font {
+        resolved("JetBrainsMono-Light", size: size, fallbackWeight: weight, design: .monospaced).monospacedDigit()
+    }
+}
+
+enum LuxMotion {
+    static let standard = Animation.easeInOut(duration: 0.8)
+}
+
+extension View {
+    /// A label-style uppercase tracked caption in Lux's muted gold — the
+    /// small "DAY 17 OF 300" / "ACTIVE SCROLL" / "SEALS" treatment used
+    /// throughout the rebuilt views.
+    func luxEyebrow(color: Color = LuxColor.goldMuted, tracking: CGFloat = 1.8) -> some View {
+        self.font(LuxFont.sans(10, weight: .medium)).tracking(tracking).foregroundColor(color)
+    }
+}
+

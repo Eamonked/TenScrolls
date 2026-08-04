@@ -3,9 +3,10 @@ import SwiftUI
 import UIKit
 #endif
 
+/// $500 Club rebuild of the Scrolls (timeline) screen. Same public surface
+/// as before (`onOpenScroll`, `openLibrary`), same share-sheet plumbing.
 struct ScrollsView: View {
     @EnvironmentObject var store: AppStore
-    @Environment(\.appearanceMode) var appearanceMode
     var onOpenScroll: (Int) -> Void
     var openLibrary: () -> Void = {}
 
@@ -15,51 +16,24 @@ struct ScrollsView: View {
     #endif
     @State private var shareScrollTarget: Scroll?
 
-    var theme: ThemeOption { Palette.theme(for: store.state.activeThemeId) }
-
     var body: some View {
-        let colors = AdaptivePalette(mode: appearanceMode)
         ScrollView {
-            VStack(alignment: .leading, spacing: 10) {
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("THE PRACTICE").font(AppFont.mono(11)).tracking(1.4).foregroundColor(theme.brass)
-                    Text("Scrolls").font(AppFont.display(28)).foregroundColor(colors.text)
-                }
-                Text("Read your notes for the active scroll three times a day — dawn, midday, and dusk — for 30 days before the next one unlocks. Mastering a scroll awards 200 XP and 20 seals.")
-                    .font(.system(size: 13)).foregroundColor(colors.textDim)
-                    .padding(.bottom, 8)
+            VStack(alignment: .leading, spacing: 24) {
+                LuxScreenHeader(eyebrow: "THE PRACTICE", title: "Scrolls")
+                Text("Three readings a day. Thirty days a scroll.")
+                    .font(LuxFont.sans(13))
+                    .italic()
+                    .foregroundColor(LuxColor.textSecondary)
 
-                ForEach(store.state.scrolls) { scroll in
-                    ScrollRow(scroll: scroll, days: store.state.scrollDaysCompleted(scroll.id), theme: theme, colors: colors)
-                        .onTapGesture {
-                            onOpenScroll(scroll.id)
-                        }
-                        .contextMenu {
-                            if scroll.status != .locked {
-                                Button {
-                                    shareScroll(scroll)
-                                } label: {
-                                    Label("Share what I'm reading", systemImage: "square.and.arrow.up")
-                                }
-                                Button {
-                                    shareScrollTarget = scroll
-                                } label: {
-                                    Label("Share this scroll", systemImage: "person.2")
-                                }
-                            }
-                        }
-                }
+                timeline
 
-                LibraryEntryRow(bookCount: store.state.libraryBooks.count, theme: theme, colors: colors)
-                    .padding(.top, 4)
-                    .onTapGesture { openLibrary() }
-
-                Color.clear.frame(height: 10)
+                libraryEntryRow
             }
             .padding(.horizontal, 20)
-            .padding(.top, 10)
+            .padding(.top, 12)
+            .padding(.bottom, 120)
         }
-        .background(colors.background)
+        .background(LuxColor.bg.ignoresSafeArea())
         #if canImport(UIKit)
         .sheet(isPresented: $showShare) {
             if let shareImage {
@@ -69,8 +43,187 @@ struct ScrollsView: View {
         #endif
         .sheet(item: $shareScrollTarget) { scroll in
             ShareScrollSheet(scroll: scroll)
-                .environment(\.appearanceMode, appearanceMode)
         }
+    }
+
+    // MARK: - Timeline
+
+    private var timeline: some View {
+        ZStack(alignment: .topLeading) {
+            // The vertical gold hairline threading every node together.
+            Rectangle()
+                .fill(LuxColor.gold.opacity(0.35))
+                .frame(width: 0.5)
+                .padding(.leading, 20)
+                .padding(.vertical, 20)
+
+            VStack(spacing: 14) {
+                ForEach(store.state.scrolls) { scroll in
+                    row(for: scroll)
+                }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func row(for scroll: Scroll) -> some View {
+        let days = store.state.scrollDaysCompleted(scroll.id)
+        HStack(alignment: .top, spacing: 16) {
+            node(for: scroll)
+            Group {
+                if scroll.status == .locked {
+                    lockedCard(scroll)
+                } else if scroll.status == .active {
+                    activeCard(scroll, days: days)
+                } else {
+                    masteredRow(scroll)
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .contextMenu {
+            if scroll.status != .locked {
+                #if canImport(UIKit)
+                Button {
+                    shareScroll(scroll)
+                } label: {
+                    Label("Share what I'm reading", systemImage: "square.and.arrow.up")
+                }
+                #endif
+                Button {
+                    shareScrollTarget = scroll
+                } label: {
+                    Label("Share this scroll", systemImage: "person.2")
+                }
+            }
+        }
+    }
+
+    private func node(for scroll: Scroll) -> some View {
+        ZStack {
+            Circle()
+                .fill(scroll.status == .active ? LuxColor.gold : LuxColor.bg)
+                .frame(width: 10, height: 10)
+                .overlay(Circle().stroke(LuxColor.gold.opacity(scroll.status == .locked ? 0.3 : 0.9), lineWidth: 1))
+        }
+        .frame(width: 40, height: 40)
+    }
+
+    private func activeCard(_ scroll: Scroll, days: Int) -> some View {
+        Button { onOpenScroll(scroll.id) } label: {
+            LuxCard {
+                VStack(alignment: .leading, spacing: 10) {
+                    Text("DAY \(Roman.from(max(1, days)))")
+                        .luxEyebrow()
+                    Text("Scroll \(scroll.roman)\(scroll.title.isEmpty ? "" : " \u{2014} \(scroll.title)")")
+                        .font(LuxFont.serif(20))
+                        .foregroundColor(LuxColor.textPrimary)
+                    if !scroll.theme.isEmpty {
+                        Text(scroll.theme)
+                            .font(LuxFont.sans(13))
+                            .italic()
+                            .foregroundColor(LuxColor.goldMuted)
+                    }
+                    let entry = store.state.log[DateKey.today()]
+                    HStack(spacing: 14) {
+                        ForEach(Session.allCases) { session in
+                            HStack(spacing: 4) {
+                                Image(systemName: (entry?.isCompleted(for: session) ?? false) ? "checkmark" : "circle")
+                                    .font(.system(size: 9, weight: .light))
+                                Text(session.label.uppercased())
+                                    .font(LuxFont.sans(8, weight: .medium))
+                                    .tracking(1)
+                            }
+                            .foregroundColor((entry?.isCompleted(for: session) ?? false) ? LuxColor.gold : LuxColor.textMuted)
+                        }
+                    }
+                    .padding(.top, 4)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
+        }
+        .buttonStyle(.plain)
+    }
+
+    private func masteredRow(_ scroll: Scroll) -> some View {
+        Button { onOpenScroll(scroll.id) } label: {
+            LuxRowCard {
+                HStack(spacing: 12) {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Scroll \(scroll.roman)\(scroll.title.isEmpty ? "" : " \u{2014} \(scroll.title)")")
+                            .font(LuxFont.sans(14, weight: .medium))
+                            .foregroundColor(LuxColor.textPrimary)
+                        Text("MASTERED")
+                            .font(LuxFont.sans(9, weight: .medium))
+                            .tracking(1.2)
+                            .foregroundColor(LuxColor.goldMuted)
+                    }
+                    Spacer()
+                    Image(systemName: "checkmark.seal")
+                        .font(.system(size: 14, weight: .light))
+                        .foregroundColor(LuxColor.gold)
+                }
+                .padding(14)
+            }
+        }
+        .buttonStyle(.plain)
+    }
+
+    private func lockedCard(_ scroll: Scroll) -> some View {
+        Button {
+            onOpenScroll(scroll.id) // presents the preview via ContentView's paywall/lock gate
+        } label: {
+            LuxRowCard {
+                HStack(spacing: 12) {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Scroll \(scroll.roman)")
+                            .font(LuxFont.sans(14, weight: .medium))
+                            .foregroundColor(LuxColor.textSecondary)
+                            .blur(radius: 2)
+                        Text("UNLOCKS LATER")
+                            .font(LuxFont.sans(9, weight: .medium))
+                            .tracking(1.2)
+                            .foregroundColor(LuxColor.textMuted)
+                    }
+                    Spacer()
+                }
+                .padding(14)
+            }
+            .opacity(0.5)
+        }
+        .buttonStyle(.plain)
+    }
+
+    // MARK: - Library entry
+
+    private var libraryEntryRow: some View {
+        let bookCount = store.state.libraryBooks.count
+        return Button(action: openLibrary) {
+            LuxRowCard {
+                HStack(spacing: 13) {
+                    Image(systemName: "books.vertical")
+                        .font(.system(size: 15, weight: .light))
+                        .foregroundColor(LuxColor.gold)
+                        .frame(width: 42, height: 42)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Library")
+                            .font(LuxFont.sans(14, weight: .medium))
+                            .foregroundColor(LuxColor.textPrimary)
+                        Text((bookCount == 0 ? "Full books alongside your scrolls" : "\(bookCount) book\(bookCount == 1 ? "" : "s")").uppercased())
+                            .font(LuxFont.sans(9, weight: .medium))
+                            .tracking(1)
+                            .foregroundColor(LuxColor.textMuted)
+                    }
+                    Spacer()
+                    Image(systemName: "chevron.right")
+                        .font(.system(size: 12, weight: .light))
+                        .foregroundColor(LuxColor.textMuted)
+                }
+                .padding(14)
+            }
+        }
+        .buttonStyle(.plain)
+        .padding(.top, 8)
     }
 
     #if canImport(UIKit)
@@ -81,86 +234,9 @@ struct ScrollsView: View {
             day: store.state.scrollDaysCompleted(scroll.id),
             totalDays: 30
         )
+        let theme = Palette.theme(for: store.state.activeThemeId)
         shareImage = NowReadingCard.renderImage(subject: subject, traderName: store.state.traderName, theme: theme)
         showShare = shareImage != nil
     }
     #endif
-}
-
-/// Entry point into the Library — kept visually distinct from the ScrollRows
-/// above it (no roman numeral, book icon instead) so it reads as "a
-/// different shelf," not an eleventh scroll.
-private struct LibraryEntryRow: View {
-    let bookCount: Int
-    let theme: ThemeOption
-    let colors: AdaptivePalette
-
-    var body: some View {
-        HStack(spacing: 13) {
-            ZStack {
-                Circle()
-                    .fill(colors.ink2)
-                    .overlay(Circle().stroke(colors.inkLine, lineWidth: 1.5))
-                    .frame(width: 42, height: 42)
-                Image(systemName: "books.vertical")
-                    .font(.system(size: 15))
-                    .foregroundColor(theme.brass)
-            }
-            VStack(alignment: .leading, spacing: 2) {
-                Text("Library").font(.system(size: 14.5, weight: .semibold)).foregroundColor(colors.text)
-                Text((bookCount == 0 ? "Full books to read alongside your scrolls" : "\(bookCount) book\(bookCount == 1 ? "" : "s")").uppercased())
-                    .font(AppFont.mono(10.5)).foregroundColor(colors.textFaint)
-            }
-            Spacer()
-            Image(systemName: "chevron.right").font(.system(size: 13)).foregroundColor(colors.textFaint)
-        }
-        .padding(14)
-        .background(colors.ink2)
-        .overlay(RoundedRectangle(cornerRadius: 16).stroke(colors.inkLine, lineWidth: 1))
-        .clipShape(RoundedRectangle(cornerRadius: 16))
-    }
-}
-
-private struct ScrollRow: View {
-    let scroll: Scroll
-    let days: Int
-    let theme: ThemeOption
-    let colors: AdaptivePalette
-
-    var statusLabel: String {
-        switch scroll.status {
-        case .locked: return "Locked"
-        case .mastered: return "Mastered · 30/30"
-        case .active: return "Day \(days) of 30"
-        }
-    }
-
-    var body: some View {
-        HStack(spacing: 13) {
-            ZStack {
-                Circle()
-                    .fill(scroll.status == .mastered ? colors.green : colors.ink2)
-                    .overlay(Circle().stroke(scroll.status == .active ? theme.brass : colors.inkLine, lineWidth: 1.5))
-                    .frame(width: 42, height: 42)
-                switch scroll.status {
-                case .locked: Image(systemName: "lock.fill").font(.system(size: 14)).foregroundColor(colors.textDim)
-                case .mastered: Image(systemName: "rosette").font(.system(size: 15)).foregroundColor(.white)
-                case .active: Text(scroll.roman).font(AppFont.display(15)).foregroundColor(theme.brass)
-                }
-            }
-            VStack(alignment: .leading, spacing: 2) {
-                Text("Scroll \(scroll.roman)\(scroll.title.isEmpty ? "" : " — \(scroll.title)")")
-                    .font(.system(size: 14.5, weight: .semibold)).foregroundColor(colors.text)
-                Text(statusLabel.uppercased())
-                    .font(AppFont.mono(10.5)).foregroundColor(colors.textFaint)
-            }
-            Spacer()
-            Image(systemName: "chevron.right").font(.system(size: 13)).foregroundColor(colors.textFaint)
-        }
-        .padding(14)
-        .background(colors.ink2)
-        .overlay(RoundedRectangle(cornerRadius: 16).stroke(colors.inkLine, lineWidth: 1))
-        .clipShape(RoundedRectangle(cornerRadius: 16))
-        .opacity(scroll.status == .locked ? 0.7 : 1)
-    }
 }
