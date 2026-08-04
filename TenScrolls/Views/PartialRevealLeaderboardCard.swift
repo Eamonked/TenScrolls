@@ -24,7 +24,10 @@ struct PartialRevealLeaderboardCard: View {
                     Text("Caravan Leaderboard")
                         .font(.headline)
                     
-                    Text("\(populationCount) traders")
+                    // Deliberately no headcount here — the total number of
+                    // traders on the leaderboard is itself part of what's
+                    // locked behind Plus, not just identities/exact ranks.
+                    Text("Locked")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }

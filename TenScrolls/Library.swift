@@ -82,7 +82,7 @@ struct LibraryIndexEntry: Identifiable, Codable, Equatable {
 }
 
 /// Which reading engine a Library book uses. See `LibraryIndexEntry.sourceType`.
-enum BookSource: String, Codable {
+nonisolated enum BookSource: String, Codable {
     case epub
     case pdf
 }
@@ -101,7 +101,7 @@ enum BookSource: String, Codable {
 /// regardless — "Save as Scroll", word counts, and journal quoting all want
 /// plain text, and for EPUB chapters it's derived from `html` at import time
 /// rather than being the only thing stored.
-struct BookChapter: Identifiable, Codable, Equatable {
+nonisolated struct BookChapter: Identifiable, Codable, Equatable {
     var id: Int
     var title: String?
     var html: String = ""
@@ -129,7 +129,7 @@ struct BookChapter: Identifiable, Codable, Equatable {
 /// The full contents of one imported book. Never held in `AppState` — always
 /// loaded from disk on demand by `LibraryStore` and released once the reader
 /// navigates away.
-struct Book: Identifiable, Codable, Equatable {
+nonisolated struct Book: Identifiable, Codable, Equatable {
     var id: UUID
     var title: String
     var author: String?
@@ -162,7 +162,7 @@ struct Book: Identifiable, Codable, Equatable {
 
 // MARK: - Disk-backed store
 
-enum LibraryStoreError: LocalizedError {
+nonisolated enum LibraryStoreError: LocalizedError {
     case notFound
 
     var errorDescription: String? {
@@ -178,7 +178,7 @@ enum LibraryStoreError: LocalizedError {
 /// memory on every read/write). `AppState` only ever carries the small
 /// `LibraryIndexEntry` metadata; this store is where the actual text lives,
 /// and it's only touched when a book is added, opened, or removed.
-enum LibraryStore {
+nonisolated enum LibraryStore {
     private static var directory: URL {
         let docs = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
         let dir = docs.appendingPathComponent("Library", isDirectory: true)

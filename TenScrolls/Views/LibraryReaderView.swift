@@ -62,6 +62,11 @@ struct LibraryReaderBody: View {
     /// sheet); left nil for a plain text-selection excerpt, which has no
     /// natural title of its own.
     @State private var pendingScrollSuggestedTitle: String?
+    /// Presented instead of `ScrollDestinationSheet` when a non-Plus reader
+    /// tries to save Library text into a scroll — writing into a scroll's
+    /// notes is an edit of Plus-gated scroll content (same as opening one
+    /// to read it), so it needs the same gate. See `requestSaveAsScroll`.
+    @State private var showScrollPlusGate = false
 
     // MARK: WKWebView reading state
     @State private var htmlCurrentChapterIndex: Int = 0
@@ -139,8 +144,7 @@ struct LibraryReaderBody: View {
                     },
                     onMakeScroll: { index in
                         guard let chapter = book.chapters[safe: index] else { return }
-                        pendingScrollExcerpt = chapter.paragraphs.joined(separator: "\n\n")
-                        pendingScrollSuggestedTitle = chapter.title
+                        requestSaveAsScroll(chapter.paragraphs.joined(separator: "\n\n"), suggestedTitle: chapter.title)
                         showTableOfContents = false
                     }
                 )
@@ -167,6 +171,9 @@ struct LibraryReaderBody: View {
                     pendingScrollSuggestedTitle = nil
                 }
             }
+        }
+        .fullScreenCover(isPresented: $showScrollPlusGate) {
+            Day30PaywallView()
         }
         .task { await load() }
     }
@@ -239,8 +246,7 @@ struct LibraryReaderBody: View {
                     pendingJournalExcerpt = excerpt
                 },
                 onSaveAsScroll: { excerpt in
-                    pendingScrollSuggestedTitle = nil
-                    pendingScrollExcerpt = excerpt
+                    requestSaveAsScroll(excerpt, suggestedTitle: nil)
                 }
             )
             .onChange(of: htmlCurrentPage) { _, newValue in
@@ -311,6 +317,20 @@ struct LibraryReaderBody: View {
         } else {
             return "Page \(localPage) of \(totalLocalPages)"
         }
+    }
+
+    /// Single entry point for both "Save as Scroll" triggers (a text
+    /// selection's menu action, and "Make this chapter a Scroll" from the
+    /// table of contents) — gates on Plus access before staging the excerpt
+    /// for `ScrollDestinationSheet`, same as `ContentView.attemptOpenScroll`
+    /// gates opening a scroll to read.
+    private func requestSaveAsScroll(_ text: String, suggestedTitle: String?) {
+        guard store.state.hasPlusAccess else {
+            showScrollPlusGate = true
+            return
+        }
+        pendingScrollSuggestedTitle = suggestedTitle
+        pendingScrollExcerpt = text
     }
 
     // MARK: - Bookmark restore

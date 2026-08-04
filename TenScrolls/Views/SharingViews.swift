@@ -162,17 +162,33 @@ struct ScrollShareDetailView: View {
                             .font(AppFont.mono(11)).foregroundColor(colors.textFaint)
                     }
 
+                    // A shared scroll's notes are the same Plus-gated scroll
+                    // content as any other — a free reader shouldn't get to
+                    // read them here just because a friend sent them, any
+                    // more than they could open one of their own scrolls.
                     if !share.notes.isEmpty {
-                        CardView {
-                            Text(share.notes)
-                                .font(.system(size: 14)).foregroundColor(colors.text)
-                                .fixedSize(horizontal: false, vertical: true)
+                        if store.state.hasPlusAccess {
+                            CardView {
+                                Text(share.notes)
+                                    .font(.system(size: 14)).foregroundColor(colors.text)
+                                    .fixedSize(horizontal: false, vertical: true)
+                            }
+                        } else {
+                            CardView {
+                                Label("Unlock Plus to read shared scrolls", systemImage: "lock")
+                                    .font(.system(size: 14, weight: .medium))
+                                    .foregroundColor(colors.textFaint)
+                            }
                         }
                     }
 
                     HStack(spacing: 10) {
                         Button {
-                            showSlotPicker = true
+                            if store.state.hasPlusAccess {
+                                showSlotPicker = true
+                            } else {
+                                store.shouldShowDay30Paywall = true
+                            }
                         } label: {
                             Label("Download", systemImage: "tray.and.arrow.down.fill")
                         }

@@ -83,16 +83,18 @@ actor SupabaseSubscription {
         // (e.g. "2026-08-02T10:15:30.123456+00:00"), which the plain
         // `.iso8601` strategy's formatter (no fractional-seconds option)
         // fails to parse. Try both, since the exact format depends on
-        // Postgres's json_build_object formatting.
-        let isoWithFractional = ISO8601DateFormatter()
-        isoWithFractional.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-        let isoPlain = ISO8601DateFormatter()
-        isoPlain.formatOptions = [.withInternetDateTime]
-
+        // Postgres's json_build_object formatting. Formatters are created
+        // fresh inside the closure rather than captured from outside —
+        // `ISO8601DateFormatter` isn't `Sendable`, and this closure has to
+        // be `@Sendable` to satisfy `dateDecodingStrategy`'s signature.
         let decoder = JSONDecoder()
         decoder.dateDecodingStrategy = .custom { decoder in
             let container = try decoder.singleValueContainer()
             let dateString = try container.decode(String.self)
+            let isoWithFractional = ISO8601DateFormatter()
+            isoWithFractional.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+            let isoPlain = ISO8601DateFormatter()
+            isoPlain.formatOptions = [.withInternetDateTime]
             if let date = isoWithFractional.date(from: dateString) ?? isoPlain.date(from: dateString) {
                 return date
             }

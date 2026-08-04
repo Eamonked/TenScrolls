@@ -502,7 +502,10 @@ struct CaravanView: View {
             HStack {
                 Text("STANDING").luxEyebrow()
                 Spacer()
-                if let fullBoard { Text("\(fullBoard.count) TRADERS").font(LuxFont.mono(10)).foregroundColor(LuxColor.textMuted) }
+                // Only shown once the ledger is actually unlocked — a locked
+                // (non-Plus) reader shouldn't learn the leaderboard's size
+                // from this header either. See `lockedLedgerCard` below.
+                if lockedSelfEntry == nil, let fullBoard { Text("\(fullBoard.count) TRADERS").font(LuxFont.mono(10)).foregroundColor(LuxColor.textMuted) }
             }
 
             if tieredEntries == nil {
@@ -535,7 +538,12 @@ struct CaravanView: View {
                     .font(LuxFont.serif(48))
                     .tracking(-1)
                     .foregroundColor(LuxColor.textPrimary)
-                Text("\(max(0, (locked.populationCount ?? 0) - 1)) traders ahead.")
+                // Deliberately no headcount here — how many traders are on
+                // the ledger is itself part of what's locked behind Plus,
+                // not just their identities/ranks. Percentile alone still
+                // gives a locked reader a sense of standing without
+                // revealing the ledger's size.
+                Text("Other traders are ranked ahead of you.")
                     .font(LuxFont.sans(13))
                     .foregroundColor(LuxColor.textSecondary)
             }

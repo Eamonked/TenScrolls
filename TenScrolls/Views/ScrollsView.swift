@@ -82,16 +82,29 @@ struct ScrollsView: View {
             .frame(maxWidth: .infinity, alignment: .leading)
         }
         .contextMenu {
+            // Both share actions surface (or transmit) a scroll's actual
+            // content/title, which is Plus-gated the same as opening the
+            // scroll to read it — see ContentView.attemptOpenScroll. A
+            // free reader tapping either just lands on the same paywall
+            // rather than silently getting content they can't otherwise see.
             if scroll.status != .locked {
                 #if canImport(UIKit)
                 Button {
-                    shareScroll(scroll)
+                    if store.state.hasPlusAccess {
+                        shareScroll(scroll)
+                    } else {
+                        store.shouldShowDay30Paywall = true
+                    }
                 } label: {
                     Label("Share what I'm reading", systemImage: "square.and.arrow.up")
                 }
                 #endif
                 Button {
-                    shareScrollTarget = scroll
+                    if store.state.hasPlusAccess {
+                        shareScrollTarget = scroll
+                    } else {
+                        store.shouldShowDay30Paywall = true
+                    }
                 } label: {
                     Label("Share this scroll", systemImage: "person.2")
                 }

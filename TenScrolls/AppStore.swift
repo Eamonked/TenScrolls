@@ -3,6 +3,29 @@ import Combine
 import WidgetKit
 import UIKit
 
+/// Snapshot struct to hold all data needed for persistence and widgets
+private struct PersistSnapshot: Sendable {
+    let streak: Int
+    let activeScrollRoman: String
+    let activeScrollTitle: String
+    let daysCompletedOnActive: Int
+    let dawnComplete: Bool
+    let middayComplete: Bool
+    let duskComplete: Bool
+    let themeId: String
+    let lastUpdated: Date
+
+    let journalEntries: [JournalWidgetData.JournalWidgetEntry]
+    let journalThemeId: String
+    let journalLastUpdated: Date
+
+    let encodedState: Data?
+}
+
+/// This pattern is used to collect all data needed for persistence and widget updates
+/// on the main actor before passing it to a detached background task. This avoids
+/// crossing actor boundaries from a background context, which could cause concurrency issues.
+
 @MainActor
 final class AppStore: ObservableObject {
     @Published var state: AppState
@@ -96,10 +119,10 @@ final class AppStore: ObservableObject {
         } else {
             loadedState = AppState.defaultState()
         }
-        // Defensive no-op in the common case (defaultState() above already
-        // seeded habits for a brand-new install) — see seedDefaultHabitsIfEmpty().
-        var seededState = loadedState
-        seededState.seedDefaultHabitsIfEmpty()
+        // No seeding needed here — defaultState() starts with zero habits
+        // by design (see its doc comment), and existing saved state is used
+        // as-is however many/few habits the reader has added.
+        let seededState = loadedState
         self.state = seededState
 
         let info = seededState.levelInfo()
@@ -245,12 +268,12 @@ final class AppStore: ObservableObject {
     /// and written, and the encode/write itself happens off the main actor so
     /// typing or tapping never blocks on disk I/O.
     private func schedulePersist() {
-        let snapshot = state
         persistTask?.cancel()
-        persistTask = Task.detached(priority: .utility) { [snapshot, defaultsKey] in
+        persistTask = Task.detached(priority: .utility) { [weak self] in
             try? await Task.sleep(nanoseconds: AppStore.persistDebounceNanoseconds)
             guard !Task.isCancelled else { return }
-            AppStore.persist(snapshot, defaultsKey: defaultsKey)
+            guard let snapshot = await self?.makePersistSnapshot() else { return }
+            AppStore.persist(snapshot: snapshot)
         }
     }
 
@@ -260,33 +283,21 @@ final class AppStore: ObservableObject {
     func flushPendingPersist() {
         persistTask?.cancel()
         persistTask = nil
-        AppStore.persist(state, defaultsKey: defaultsKey)
+        Task.detached(priority: .utility) { [weak self] in
+            guard let snapshot = await self?.makePersistSnapshot() else { return }
+            AppStore.persist(snapshot: snapshot)
+        }
     }
 
-    /// The actual encode + disk write. `nonisolated` (and `static`, taking an
-    /// explicit snapshot) so it can run entirely off the main actor with no
-    /// implicit hop back for state access — this is the expensive part we don't
-    /// want blocking the UI.
-    private nonisolated static func persist(_ state: AppState, defaultsKey: String) {
+    /// Gathers a snapshot of all data needed for persistence and widgets on the MainActor
+    @MainActor
+    private func makePersistSnapshot() -> PersistSnapshot {
         let todayKey = DateKey.today()
         let todayLog = state.log[todayKey]
         let activeScroll = state.activeScroll
         let daysCompleted = activeScroll.map { state.scrollDaysCompleted($0.id) } ?? 0
         let themeId = state.activeThemeId
         let streak = state.currentStreak
-
-        let wData = WidgetData(
-            streak: streak,
-            activeScrollRoman: activeScroll?.roman ?? "X",
-            activeScrollTitle: activeScroll?.title ?? "",
-            daysCompletedOnActive: daysCompleted,
-            dawnComplete: todayLog?.dawn ?? false,
-            middayComplete: todayLog?.midday ?? false,
-            duskComplete: todayLog?.dusk ?? false,
-            themeId: themeId,
-            lastUpdated: Date()
-        )
-        WidgetData.save(wData)
 
         // Export journal data for journal widget. The widget only draws from
         // entries the reader has explicitly starred for it; until at least one
@@ -306,15 +317,52 @@ final class AppStore: ObservableObject {
                 )
             }
 
-        let journalData = JournalWidgetData(
-            entries: Array(journalEntries),
-            themeId: themeId,
-            lastUpdated: Date()
-        )
-        JournalWidgetData.save(journalData)
+        let encodedState = try? JSONEncoder().encode(state)
 
-        if let data = try? JSONEncoder().encode(state) {
-            UserDefaults.standard.set(data, forKey: defaultsKey)
+        return PersistSnapshot(
+            streak: streak,
+            activeScrollRoman: activeScroll?.roman ?? "X",
+            activeScrollTitle: activeScroll?.title ?? "",
+            daysCompletedOnActive: daysCompleted,
+            dawnComplete: todayLog?.dawn ?? false,
+            middayComplete: todayLog?.midday ?? false,
+            duskComplete: todayLog?.dusk ?? false,
+            themeId: themeId,
+            lastUpdated: Date(),
+
+            journalEntries: Array(journalEntries),
+            journalThemeId: themeId,
+            journalLastUpdated: Date(),
+
+            encodedState: encodedState
+        )
+    }
+
+    /// Writes data to disk and updates widgets off the main actor.
+    private nonisolated static func persist(snapshot: PersistSnapshot) {
+        WidgetData.save(
+            WidgetData(
+                streak: snapshot.streak,
+                activeScrollRoman: snapshot.activeScrollRoman,
+                activeScrollTitle: snapshot.activeScrollTitle,
+                daysCompletedOnActive: snapshot.daysCompletedOnActive,
+                dawnComplete: snapshot.dawnComplete,
+                middayComplete: snapshot.middayComplete,
+                duskComplete: snapshot.duskComplete,
+                themeId: snapshot.themeId,
+                lastUpdated: snapshot.lastUpdated
+            )
+        )
+        JournalWidgetData.save(
+            JournalWidgetData(
+                entries: snapshot.journalEntries,
+                themeId: snapshot.journalThemeId,
+                lastUpdated: snapshot.journalLastUpdated
+            )
+        )
+
+        if let data = snapshot.encodedState {
+            UserDefaults.standard.set(data, forKey: "ten-scrolls-state")
         }
         WidgetCenter.shared.reloadAllTimelines()
     }
@@ -1191,46 +1239,25 @@ final class AppStore: ObservableObject {
         afterMutation()
     }
     
-    /// Checks if user can access a specific scroll based on subscription + progress
+    /// Checks if user can access a specific scroll. Scroll I is always free —
+    /// it's the hook, and gating it hurt conversion more than it helped. Every
+    /// other scroll (II+) requires an active Plus subscription or trial. The
+    /// day-progress unlock (`scroll.status`) still governs which scroll is
+    /// next in the sequence; this is the subscription gate layered on top.
+    /// Kept `async` (no network round trip needed anymore) so call sites
+    /// don't need to change.
     func canAccessScroll(_ scrollId: Int) async -> ScrollAccess {
-        // Scroll I is always accessible
         if scrollId == 1 {
             return ScrollAccess(scrollId: scrollId, isAccessible: true, reason: .unlocked)
         }
-        
-        // Scroll II and beyond: check Day 30 paywall. Once a free user has
-        // crossed the 30-day mark, every scroll past the first requires Plus
-        // — not just Scroll II specifically — since the hard paywall is meant
-        // to cover the rest of the 300-day journey, not just the next scroll.
-        if scrollId >= 2 && state.totalDaysCompleted >= 30 {
-            // Hit the paywall
-            if state.hasPlusAccess {
-                return ScrollAccess(scrollId: scrollId, isAccessible: true, reason: .trialActive)
-            } else {
-                do {
-                    let canAccess = try await subscription.canAccessScrollTwo()
-                    if canAccess {
-                        return ScrollAccess(scrollId: scrollId, isAccessible: true, reason: .unlocked)
-                    } else {
-                        return ScrollAccess(
-                            scrollId: scrollId,
-                            isAccessible: false,
-                            reason: .subscriptionRequired(daysCompleted: state.totalDaysCompleted)
-                        )
-                    }
-                } catch {
-                    // On error, default to checking local state
-                    return ScrollAccess(
-                        scrollId: scrollId,
-                        isAccessible: false,
-                        reason: .subscriptionRequired(daysCompleted: state.totalDaysCompleted)
-                    )
-                }
-            }
+        if state.hasPlusAccess {
+            return ScrollAccess(scrollId: scrollId, isAccessible: true, reason: .trialActive)
         }
-        
-        // Normal unlock progression for other scrolls
-        return ScrollAccess(scrollId: scrollId, isAccessible: true, reason: .unlocked)
+        return ScrollAccess(
+            scrollId: scrollId,
+            isAccessible: false,
+            reason: .subscriptionRequired(daysCompleted: state.totalDaysCompleted)
+        )
     }
     
     /// Call this on app foreground and after session completion

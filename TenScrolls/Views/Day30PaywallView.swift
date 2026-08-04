@@ -1,7 +1,13 @@
 import SwiftUI
 
-/// Day 30 paywall - blocks access to Scroll II and beyond for free users.
-/// Copy anchored to accumulated stats and percentile to create FOMO.
+/// Plus paywall — blocks scroll view/read/edit access for free users.
+/// Presented both the moment a free reader tries to open *any* scroll
+/// (`ContentView.attemptOpenScroll`, from Day 1 — scroll content is
+/// prefilled/curated, not reader-authored) and, for readers who crossed 30
+/// days before this policy, the legacy Day 30 trigger
+/// (`AppState.shouldShowDay30Paywall`). Copy adapts to whichever applies:
+/// stats-and-percentile FOMO once there's real progress to show, a plainer
+/// "unlock to start reading" framing before then.
 struct Day30PaywallView: View {
     @EnvironmentObject var store: AppStore
     @Environment(\.dismiss) private var dismiss
@@ -13,6 +19,10 @@ struct Day30PaywallView: View {
     @State private var storePrice: String? = nil
 
     private var theme: ThemeOption { Palette.theme(for: store.state.activeThemeId) }
+    /// Whether there's any accumulated progress worth anchoring FOMO copy
+    /// to. False for a reader hitting this paywall on Day 1 by trying to
+    /// open a scroll before ever completing a day.
+    private var hasProgress: Bool { store.state.totalDaysCompleted > 0 }
 
     var body: some View {
         ZStack {
@@ -28,10 +38,10 @@ struct Day30PaywallView: View {
                         .font(.system(size: 56))
                         .foregroundStyle(theme.brass)
                     
-                    Text("You've reached Day 30")
+                    Text(hasProgress ? "You've reached Day 30" : "Ten Scrolls is a Plus experience")
                         .font(.title.bold())
                     
-                    if let percentile {
+                    if let percentile, hasProgress {
                         Text("You're in the top \(100 - percentile)%")
                             .font(.title3.bold())
                             .foregroundStyle(theme.brass)
@@ -43,29 +53,32 @@ struct Day30PaywallView: View {
                 Divider()
                     .padding(.horizontal)
                 
-                // Stats
-                VStack(spacing: 16) {
-                    StatRow(label: "Streak", value: "\(store.state.currentStreak) days")
-                    StatRow(label: "Total XP", value: "\(store.state.totalXP)")
-                    StatRow(label: "Level", value: store.state.levelInfo().rank)
-                    
-                    if let percentile {
-                        StatRow(label: "Rank", value: "Top \(100 - percentile)%")
+                // Stats — only shown once there's real progress to anchor them
+                // to; a Day 1 reader has nothing here worth showing yet.
+                if hasProgress {
+                    VStack(spacing: 16) {
+                        StatRow(label: "Streak", value: "\(store.state.currentStreak) days")
+                        StatRow(label: "Total XP", value: "\(store.state.totalXP)")
+                        StatRow(label: "Level", value: store.state.levelInfo().rank)
+                        
+                        if let percentile {
+                            StatRow(label: "Rank", value: "Top \(100 - percentile)%")
+                        }
                     }
+                    .padding(.vertical, 24)
+                    .padding(.horizontal, 32)
+                    
+                    Divider()
+                        .padding(.horizontal)
                 }
-                .padding(.vertical, 24)
-                .padding(.horizontal, 32)
-                
-                Divider()
-                    .padding(.horizontal)
                 
                 // Message
                 VStack(spacing: 8) {
-                    Text("Unlock Plus to see where you really stand")
+                    Text(hasProgress ? "Unlock Plus to see where you really stand" : "Every scroll is written and curated — not something you fill in yourself")
                         .font(.headline)
                         .multilineTextAlignment(.center)
                     
-                    Text("Continue to Scroll II and see your exact rank on the leaderboard")
+                    Text(hasProgress ? "Continue to Scroll II and see your exact rank on the leaderboard" : "Subscribe to read, and see your rank on the Caravan leaderboard")
                         .font(.subheadline)
                         .foregroundStyle(.secondary)
                         .multilineTextAlignment(.center)

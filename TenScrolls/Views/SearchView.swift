@@ -48,7 +48,15 @@ struct SearchView: View {
                                     Button {
                                         onOpenScroll(scroll)
                                     } label: {
-                                        ScrollMatchRow(scroll: scroll, themeOption: theme, colors: colors)
+                                        // Scroll content is a Plus-only surface (see
+                                        // ContentView.attemptOpenScroll) — a free reader
+                                        // shouldn't be able to read scroll notes via a
+                                        // search-result preview either. The row still
+                                        // shows (so search stays useful for finding which
+                                        // scroll matched), but tapping still routes
+                                        // through the same gate/paywall as opening the
+                                        // scroll any other way.
+                                        ScrollMatchRow(scroll: scroll, themeOption: theme, colors: colors, redactPreview: !store.state.hasPlusAccess)
                                     }
                                 }
                             }
@@ -103,17 +111,27 @@ private struct ScrollMatchRow: View {
     let scroll: Scroll
     let themeOption: ThemeOption
     let colors: AdaptivePalette
+    /// True for readers without Plus access — hides the actual note text
+    /// (Plus-gated scroll content) behind a generic prompt instead, while
+    /// still surfacing that this scroll matched the query.
+    var redactPreview: Bool = false
     
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
             Text("Scroll \(scroll.roman) — \(scroll.title)")
                 .font(AppFont.mono(10.5))
                 .foregroundColor(themeOption.brass.opacity(0.8))
-            Text(scroll.notes)
-                .font(.system(size: 13.5))
-                .foregroundColor(colors.text)
-                .lineLimit(3)
-                .lineSpacing(4)
+            if redactPreview {
+                Label("Unlock Plus to read this scroll", systemImage: "lock")
+                    .font(.system(size: 13, weight: .medium))
+                    .foregroundColor(colors.textFaint)
+            } else {
+                Text(scroll.notes)
+                    .font(.system(size: 13.5))
+                    .foregroundColor(colors.text)
+                    .lineLimit(3)
+                    .lineSpacing(4)
+            }
         }
         .padding(.vertical, 4)
         .listRowBackground(colors.ink2)

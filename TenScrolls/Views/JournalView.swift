@@ -1,11 +1,13 @@
 import SwiftUI
 
 /// $500 Club rebuild of the Journal screen. Same public surface as before
-/// (`openJournal`, `openSearch`), same draft/publish/pin/delete/deep-link
-/// plumbing via `AppStore`.
+/// (`openSearch`), same draft/publish/pin/delete/deep-link plumbing via
+/// `AppStore`. The header's plus button was removed — it duplicated the
+/// pencil button's inline-draft flow via a separate modal composer; see
+/// `TodayView.reflectionButton` for the one remaining place that still
+/// switches to this tab and starts a draft from outside it.
 struct JournalView: View {
     @EnvironmentObject var store: AppStore
-    var openJournal: () -> Void
     var openSearch: () -> Void
 
     private enum Filter: String, CaseIterable { case all = "All", starred = "Starred", reflections = "Reflections" }
@@ -49,6 +51,7 @@ struct JournalView: View {
             ScrollView {
                 content
             }
+            .scrollDismissesKeyboard(.interactively)
             .background(LuxColor.bg.ignoresSafeArea())
             .onAppear { scrollToPendingEntry(proxy: proxy) }
             .onChange(of: store.pendingJournalEntryId) { _, _ in
@@ -127,7 +130,6 @@ struct JournalView: View {
             Spacer()
             HStack(spacing: 10) {
                 LuxIconButton(systemImage: "magnifyingglass", action: openSearch)
-                LuxIconButton(systemImage: "plus", action: openJournal)
                 LuxIconButton(systemImage: "square.and.pencil", action: { store.addDraftEntry() })
             }
         }
@@ -185,6 +187,15 @@ private struct DraftEntryRow: View {
                         .font(LuxFont.mono(9))
                         .foregroundColor(LuxColor.textMuted)
                     Spacer()
+                    // Always-visible way to back out — dismisses the keyboard and, if
+                    // nothing's been written yet, discards the empty draft outright
+                    // (nothing to lose, so no confirmation). This used to be reachable
+                    // only via a hidden long-press context menu.
+                    Button(action: handleClose) {
+                        Image(systemName: "xmark.circle.fill")
+                            .foregroundColor(LuxColor.textMuted)
+                    }
+                    .buttonStyle(.plain)
                     if !editedText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                         Button(action: onPublish) {
                             Image(systemName: "checkmark.circle").foregroundColor(LuxColor.gold)
@@ -200,6 +211,17 @@ private struct DraftEntryRow: View {
                     .focused($isFocused)
                     .onChange(of: editedText) { _, newValue in onUpdate(newValue) }
                     .onAppear { if entry.text.isEmpty { isFocused = true } }
+                    .toolbar {
+                        // Standard iOS keyboard-dismiss affordance — the app had no
+                        // Done button anywhere and tapping outside the text view
+                        // didn't resign focus either, so the keyboard had no way
+                        // to go away short of force-quitting or finding the hidden
+                        // delete action.
+                        ToolbarItemGroup(placement: .keyboard) {
+                            Spacer()
+                            Button("Done", action: handleClose)
+                        }
+                    }
             }
         }
         .overlay(RoundedRectangle(cornerRadius: 16).stroke(LuxColor.goldMuted.opacity(0.4), lineWidth: 0.5))
@@ -211,6 +233,19 @@ private struct DraftEntryRow: View {
         .confirmationDialog("Delete this draft?", isPresented: $showDeleteConfirmation, titleVisibility: .visible) {
             Button("Delete", role: .destructive) { onDelete() }
             Button("Cancel", role: .cancel) {}
+        }
+    }
+
+    /// Dismisses the keyboard; if the draft is still empty, also removes the
+    /// row entirely — closing an empty draft should feel like backing out of
+    /// something you never started, not a decision that needs confirming.
+    /// A draft with text in it is left alone (already auto-saved via
+    /// `onUpdate` on every keystroke), so closing the keyboard never loses
+    /// anything the reader typed.
+    private func handleClose() {
+        isFocused = false
+        if editedText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            onDelete()
         }
     }
 }

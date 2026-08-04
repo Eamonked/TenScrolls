@@ -1,23 +1,23 @@
 import SwiftUI
 
 enum ActiveSheet: Identifiable {
-    case journal
     case scrollEditor(Scroll)
     case info
     case notifSettings
     case skipReason(date: String, isMissedDay: Bool)
     case search
     case library
+    case habits
 
     var id: String {
         switch self {
-        case .journal: return "journal"
         case .scrollEditor(let s): return "scroll-\(s.id)"
         case .info: return "info"
         case .notifSettings: return "notif"
         case .skipReason(let d, _): return "skip-\(d)"
         case .search: return "search"
         case .library: return "library"
+        case .habits: return "habits"
         }
     }
 }
@@ -43,7 +43,7 @@ struct ContentView: View {
     private func isFullScreenPresentation(_ sheet: ActiveSheet) -> Bool {
         switch sheet {
         case .scrollEditor, .library: return true
-        case .journal, .info, .notifSettings, .skipReason, .search: return false
+        case .info, .notifSettings, .skipReason, .search, .habits: return false
         }
     }
 
@@ -90,13 +90,13 @@ struct ContentView: View {
 
             TabView(selection: $store.selectedTab) {
                 NavigationStack {
-                    TodayView(openJournal: { activeSheet = .journal },
-                              openInfo: { activeSheet = .info },
+                    TodayView(openInfo: { activeSheet = .info },
                               openNotifSettings: { activeSheet = .notifSettings },
                               promptSkip: { date in
                                   activeSheet = .skipReason(date: date, isMissedDay: false)
                               },
-                              openScroll: { scroll in attemptOpenScroll(scroll) })
+                              openScroll: { scroll in attemptOpenScroll(scroll) },
+                              openHabits: { activeSheet = .habits })
                         .hideNavigationBar()
                 }
                 // Today/Scrolls/Journal/Caravan/Progress (the Lux rebuild)
@@ -122,8 +122,7 @@ struct ContentView: View {
                 .tag(1)
 
                 NavigationStack {
-                    JournalView(openJournal: { activeSheet = .journal },
-                                openSearch: { activeSheet = .search })
+                    JournalView(openSearch: { activeSheet = .search })
                         .hideNavigationBar()
                 }
                 .tabItem { Label("Journal", systemImage: "book") }
@@ -276,17 +275,13 @@ struct ContentView: View {
         }
     }
 
-    /// Single choke point for opening any scroll's reader. Scroll I is always
-    /// open; every other scroll goes through `AppStore.canAccessScroll` (which
-    /// checks the Day 30 hard paywall server-side via `can_access_scroll_two`)
-    /// before the editor sheet is allowed to present. On denial, routes to the
-    /// Day 30 paywall instead — this is the actual enforcement point, since
-    /// `scroll.status` only tracks day-progress unlocking, not subscription.
+    /// Single choke point for opening any scroll's reader — every scroll
+    /// goes through `AppStore.canAccessScroll` (see its doc comment) before
+    /// the editor sheet is allowed to present. Scroll I is always free;
+    /// Scroll II+ requires Plus. On denial, routes to the Plus paywall
+    /// instead — this is the actual enforcement point, since `scroll.status`
+    /// only tracks day-progress unlocking, not subscription.
     private func attemptOpenScroll(_ scroll: Scroll) {
-        guard scroll.id != 1 else {
-            activeSheet = .scrollEditor(scroll)
-            return
-        }
         Task {
             let access = await store.canAccessScroll(scroll.id)
             if access.isAccessible {
@@ -309,11 +304,6 @@ struct ContentView: View {
     @ViewBuilder
     private func sheetContent(for sheet: ActiveSheet) -> some View {
         switch sheet {
-        case .journal:
-            JournalComposerSheet(scroll: store.state.activeScroll) { text in
-                store.addJournalEntry(text)
-                activeSheet = nil
-            }
         case .scrollEditor(let scroll):
             // Route through the Lux $500-club reader. For locked scrolls that
             // have no content yet, ScrollReaderView immediately shows its empty
@@ -342,6 +332,8 @@ struct ContentView: View {
             }
         case .library:
             LibraryView()
+        case .habits:
+            HabitsView()
         }
     }
 

@@ -265,17 +265,17 @@ struct DocumentImportSheet: View {
                 var pdfData: Data? = nil
                 var coverData: Data? = nil
                 if ext == "epub" {
-                    let parsed = try EPUBParser.extractChapters(from: url)
+                    let parsed = try await EPUBParser.extractChapters(from: url)
                     bookTitle = parsed.bookTitle
                     chunks = parsed.chapters.map { $0.text }
                     titles = parsed.chapters.map { $0.title }
                     html = parsed.chapters.map { $0.html }
                     coverData = parsed.coverImageData
                 } else {
-                    chunks = try PDFImporter.extractPages(from: url)
+                    chunks = try await PDFImporter.extractPages(from: url)
                     titles = Array(repeating: nil, count: chunks.count)
                     pdfData = try Data(contentsOf: url)
-                    coverData = PDFImporter.coverThumbnail(from: url)
+                    coverData = await PDFImporter.coverThumbnail(from: url)
                 }
                 let doc = ParsedDocument(filename: url.lastPathComponent, bookTitle: bookTitle, chunks: chunks, titles: titles, html: html, pdfData: pdfData, coverData: coverData)
                 await MainActor.run { stage = .configure(doc) }

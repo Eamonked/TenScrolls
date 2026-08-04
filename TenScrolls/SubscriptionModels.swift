@@ -52,7 +52,7 @@ struct SubscriptionInfo: Codable, Equatable, Sendable {
 }
 
 /// Result from starting a trial
-struct TrialStartResult: Decodable {
+nonisolated struct TrialStartResult: Decodable {
     let success: Bool
     let error: String?
     let message: String?
@@ -75,7 +75,7 @@ struct TrialStartResult: Decodable {
 /// `error`/`message` are populated when `success` is false, e.g. StoreKit
 /// signature verification failed, the product ID didn't match, or this
 /// transaction is already bound to a different account.
-struct SubscriptionActivationResult: Decodable {
+nonisolated struct SubscriptionActivationResult: Decodable {
     let success: Bool
     let plusSince: Date?
     let error: String?
@@ -90,7 +90,7 @@ struct SubscriptionActivationResult: Decodable {
 }
 
 /// Result from checking trial expiry
-struct TrialExpiryCheckResult: Decodable {
+nonisolated struct TrialExpiryCheckResult: Decodable {
     let success: Bool
     let expired: Bool
     let newStatus: String?
@@ -109,7 +109,7 @@ struct TrialExpiryCheckResult: Decodable {
 /// subscriber was actually flipped to `lapsed`; false covers both "already
 /// wasn't active" and "call didn't need to do anything", neither of which is
 /// an error.
-struct SubscriptionDeactivationResult: Decodable {
+nonisolated struct SubscriptionDeactivationResult: Decodable {
     let success: Bool
     let changed: Bool
     let newStatus: String?

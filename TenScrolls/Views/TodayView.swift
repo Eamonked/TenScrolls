@@ -1,16 +1,23 @@
 import SwiftUI
 
-/// $500 Club rebuild of the Today screen. Same public surface as before
-/// (all five closures ContentView wires up), same AppStore/AppState calls —
-/// only the presentation changed.
+/// $500 Club rebuild of the Today screen. Same public surface as before,
+/// minus `openJournal` (see `addButton` below) — same AppStore/
+/// AppState calls otherwise, only the presentation changed.
+///
+/// The old separate "Practice" and "Add today's reflection" rows are now
+/// one button (`addButton`) so there's a single obvious place to add
+/// something new. Tapping it asks which of the two the reader means via a
+/// `.confirmationDialog`, then routes to exactly the same destinations as
+/// before (`openHabits()` / the Journal tab draft flow).
 struct TodayView: View {
     @EnvironmentObject var store: AppStore
-    var openJournal: () -> Void
     var openInfo: () -> Void
     var openNotifSettings: () -> Void
     var promptSkip: (String) -> Void
     var openScroll: (Scroll) -> Void
-    @State private var newHabit = ""
+    var openHabits: () -> Void
+
+    @State private var showingAddChoice = false
 
     private var todayEntry: DayEntry? {
         store.state.log[DateKey.today()]
@@ -22,14 +29,18 @@ struct TodayView: View {
                 header
                 heroSection
                 streakRow
-                practiceSection
-                reflectionButton
+                addButton
             }
             .padding(.horizontal, 20)
             .padding(.top, 12)
             .padding(.bottom, 120)
         }
         .background(LuxColor.bg.ignoresSafeArea())
+        .confirmationDialog("What would you like to add?", isPresented: $showingAddChoice, titleVisibility: .visible) {
+            Button("New Habit") { openHabits() }
+            Button("Reflection") { addReflection() }
+            Button("Cancel", role: .cancel) {}
+        }
     }
 
     // MARK: - Header
@@ -160,89 +171,37 @@ struct TodayView: View {
         .frame(maxWidth: .infinity)
     }
 
-    // MARK: - Practice (habits)
+    // MARK: - Add (habit or reflection)
 
-    private var practiceSection: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Text("PRACTICE").luxEyebrow()
-            LuxRowCard {
-                VStack(spacing: 0) {
-                    if store.state.habits.isEmpty {
-                        LuxEmptyLine(text: "No habits yet. Add one below.", height: 60)
-                    }
-                    ForEach(store.state.habits) { habit in
-                        VStack(spacing: 0) {
-                            habitRow(habit)
-                            if habit.id != store.state.habits.last?.id {
-                                LuxDivider()
-                            }
-                        }
-                    }
-                }
-                HStack(spacing: 10) {
-                    TextField("", text: $newHabit, prompt: Text("Add a practice\u{2026}").foregroundColor(LuxColor.textMuted))
-                        .font(LuxFont.sans(13))
-                        .foregroundColor(LuxColor.textPrimary)
-                        .onSubmit(commitHabit)
-                }
-                .padding(.horizontal, 16)
-                .padding(.vertical, 12)
-            }
-            Button(action: commitHabit) {
-                Text("+ New Practice")
-                    .font(LuxFont.sans(10, weight: .medium))
-                    .tracking(1.2)
-                    .foregroundColor(LuxColor.goldMuted)
-            }
-            .buttonStyle(.plain)
-            .padding(.top, 2)
+    /// Single entry point for both the old "Practice" row (opens `HabitsView`
+    /// as a sheet) and the old "Add today's reflection" row (drops into a
+    /// Journal draft). Tapping this just asks which one via a
+    /// `.confirmationDialog` in `body` — keeps Today simple with one obvious
+    /// button instead of two similar-looking rows.
+    private var addButton: some View {
+        LuxReflectionBookCard(subtitle: addSubtitle) {
+            showingAddChoice = true
         }
     }
 
-    private func habitRow(_ habit: Habit) -> some View {
-        HStack(spacing: 14) {
-            Button { store.toggleHabit(habit.id) } label: {
-                LuxCheckbox(done: habit.completedDates.contains(DateKey.today()))
-            }
-            .buttonStyle(.plain)
-            Text(habit.name)
-                .font(LuxFont.sans(14))
-                .foregroundColor(LuxColor.textPrimary)
-            Spacer()
-            Text("\(Roman.from(max(1, store.state.habitStreak(habit)))) D")
-                .font(LuxFont.mono(10))
-                .foregroundColor(LuxColor.textSecondary)
-        }
-        .frame(height: 60)
-        .padding(.horizontal, 16)
-        .contextMenu {
-            Button(role: .destructive) { store.removeHabit(habit.id) } label: {
-                Label("Remove", systemImage: "trash")
-            }
-        }
+    private var addSubtitle: String {
+        let habits = store.state.habits
+        guard !habits.isEmpty else { return "Add a habit or a reflection" }
+        let key = DateKey.today()
+        let done = habits.filter { $0.completedDates.contains(key) }.count
+        return "\(done) of \(habits.count) habits today \u{2022} tap to add more"
     }
 
-    private func commitHabit() {
-        let trimmed = newHabit.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return }
-        store.addHabit(trimmed)
-        newHabit = ""
-    }
-
-    // MARK: - Reflection
-
-    private var reflectionButton: some View {
-        Button(action: openJournal) {
-            VStack(spacing: 4) {
-                Text("Add today's reflection")
-                    .font(LuxFont.sans(12, weight: .medium))
-                    .foregroundColor(LuxColor.textPrimary)
-                Text("Unlocks after dusk")
-                    .font(LuxFont.sans(10))
-                    .foregroundColor(LuxColor.textSecondary)
-            }
-        }
-        .buttonStyle(LuxGhostButtonStyle())
+    /// Switches to the Journal tab and starts an inline draft there (the
+    /// same flow as JournalView's pencil button) rather than presenting the
+    /// old modal `JournalComposerSheet` — that sheet is now reserved for
+    /// quote-capture from the Scroll/Library readers (see `Sheets.swift`).
+    /// `DraftEntryRow.onAppear` autofocuses the new draft's text field once
+    /// the tab switch lands, so this still drops the reader straight into
+    /// writing.
+    private func addReflection() {
+        store.selectedTab = 2
+        store.addDraftEntry()
     }
 }
 

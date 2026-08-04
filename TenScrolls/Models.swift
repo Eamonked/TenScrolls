@@ -548,7 +548,7 @@ struct LeaderboardEntry: Identifiable, Equatable, Sendable {
 /// mismatch doesn't produce a compile error or a visible runtime error, it
 /// just makes every decode of the RPC response fail silently, which is
 /// exactly what `shared_at` (the RPC returns `created_at`) was doing.
-struct PendingScrollShare: Identifiable, Decodable, Equatable {
+nonisolated struct PendingScrollShare: Identifiable, Decodable, Equatable {
     let id: UUID
     let scroll_number: Int
     let title: String
@@ -564,7 +564,7 @@ struct PendingScrollShare: Identifiable, Decodable, Equatable {
 /// A cheer sent to this user that hasn't been acknowledged yet. Decoded from
 /// the `fetch_unacknowledged_cheers` RPC response — the in-app fallback
 /// surface for when a push notification was missed or not tapped.
-struct PendingCheer: Identifiable, Decodable, Equatable {
+nonisolated struct PendingCheer: Identifiable, Decodable, Equatable {
     var id: UUID { cheer_id }
     let cheer_id: UUID
     let from_trader_code: String
@@ -574,7 +574,7 @@ struct PendingCheer: Identifiable, Decodable, Equatable {
 
 /// Whether the last cheer *I* sent to a given trader code has been seen.
 /// Decoded from the `fetch_cheer_ack_status` RPC response.
-struct CheerAckStatus: Decodable, Equatable {
+nonisolated struct CheerAckStatus: Decodable, Equatable {
     let sent: Bool
     let acknowledged: Bool?
     let sent_at: Date?
@@ -584,7 +584,7 @@ struct CheerAckStatus: Decodable, Equatable {
 /// Lightweight summary of a reading group for the Caravan tab's group list
 /// and the share-recipient picker. Decoded from the `fetch_my_reading_groups`
 /// RPC response.
-struct ReadingGroupSummary: Identifiable, Decodable, Equatable {
+nonisolated struct ReadingGroupSummary: Identifiable, Decodable, Equatable {
     var id: UUID { group_id }
     let group_id: UUID
     let name: String
@@ -594,7 +594,7 @@ struct ReadingGroupSummary: Identifiable, Decodable, Equatable {
 
 /// Result of a create-group or join-group operation, returned by
 /// `SupabaseSharing.createGroup` / `joinGroup`.
-enum GroupOperationResult {
+nonisolated enum GroupOperationResult {
     case created(id: UUID, code: String, name: String)
     case joined(id: UUID, name: String)
     case failure(String)
@@ -636,7 +636,7 @@ enum Constants {
 /// `id`/`created_at` columns (see migration 007's comment on why), so a
 /// name mismatch here would fail every decode silently, the same class of
 /// bug that broke `PendingScrollShare.shared_at` before.
-struct DirectMessage: Identifiable, Decodable, Equatable {
+nonisolated struct DirectMessage: Identifiable, Decodable, Equatable {
     var id: UUID { dm_id }
     let dm_id: UUID
     let from_trader_code: String
@@ -651,7 +651,7 @@ struct DirectMessage: Identifiable, Decodable, Equatable {
 /// Caravan tab's inbox list. Decoded from the `fetch_dm_threads` RPC
 /// response — every mutual friend appears here even with zero messages yet
 /// (`last_message`/`last_message_at`/`last_message_is_mine` nil in that case).
-struct DMThreadSummary: Identifiable, Decodable, Equatable {
+nonisolated struct DMThreadSummary: Identifiable, Decodable, Equatable {
     var id: String { thread_trader_code }
     let thread_trader_code: String
     let thread_trader_name: String

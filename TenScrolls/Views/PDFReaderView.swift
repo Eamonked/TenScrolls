@@ -311,6 +311,10 @@ struct PDFReaderView: View {
 
     @State private var pendingJournalExcerpt: String?
     @State private var pendingScrollExcerpt: String?
+    /// Presented instead of `ScrollDestinationSheet` when a non-Plus reader
+    /// tries to save PDF text into a scroll — mirrors
+    /// `LibraryReaderBody.showScrollPlusGate` for the WKWebView/EPUB path.
+    @State private var showScrollPlusGate = false
 
     private let proxy = PDFReaderProxy()
 
@@ -356,7 +360,7 @@ struct PDFReaderView: View {
                 },
                 onSelectionChange: { _ in },
                 onAddToJournal: { excerpt in pendingJournalExcerpt = excerpt },
-                onSaveAsScroll: { excerpt in pendingScrollExcerpt = excerpt },
+                onSaveAsScroll: { excerpt in requestSaveAsScroll(excerpt) },
                 proxy: proxy
             )
             .modifier(NightModeAdaptation(isDark: appearanceMode == .dark))
@@ -408,6 +412,9 @@ struct PDFReaderView: View {
                     pendingScrollExcerpt = nil
                 }
             }
+        }
+        .fullScreenCover(isPresented: $showScrollPlusGate) {
+            Day30PaywallView()
         }
         .safeAreaInset(edge: .bottom) {
             ReadingProgressBar(
@@ -484,6 +491,17 @@ struct PDFReaderView: View {
 
     private func quotedExcerpt(_ excerpt: String) -> String {
         "\u{201C}\(excerpt)\u{201D}\n\n\u{2014} \(bookTitle)"
+    }
+
+    /// Gates "Save as Scroll" on Plus access, same rationale as
+    /// `LibraryReaderBody.requestSaveAsScroll` — writing into a scroll's
+    /// notes is an edit of Plus-gated scroll content.
+    private func requestSaveAsScroll(_ excerpt: String) {
+        guard store.state.hasPlusAccess else {
+            showScrollPlusGate = true
+            return
+        }
+        pendingScrollExcerpt = excerpt
     }
 
     private func errorView(_ message: String, colors: AdaptivePalette) -> some View {

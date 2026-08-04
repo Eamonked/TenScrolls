@@ -261,6 +261,12 @@ enum LuxColor {
     /// The inner hairline along a card's top edge — a sliver of warm gold,
     /// not a full stroke. Use with `.frame(height: 1)` pinned to the top.
     static let hairlineTop = Color.lux(light: Color(hex: "AD8636"), dark: Color(hex: "C49A5C")).opacity(0.125)
+    /// `LuxCard`'s drop shadow. A near-black 60%-opacity shadow reads as a
+    /// soft glow on a near-black background but as a heavy smudge on a
+    /// white one, so this is deliberately lighter in light mode rather than
+    /// one constant opacity — see `LuxCard`, which also scales the blur
+    /// radius/offset per mode alongside this color.
+    static let cardShadow = Color.lux(light: Color.black.opacity(0.12), dark: Color.black.opacity(0.6))
     static let textPrimary = Color.lux(light: Color(hex: "1B1712"), dark: Color(hex: "F5F2ED"))
     static let textSecondary = Color.lux(light: Color(hex: "6C665A"), dark: Color(hex: "8A877E"))
     static let textMuted = Color.lux(light: Color(hex: "AFA997"), dark: Color(hex: "4A4842"))
@@ -269,9 +275,36 @@ enum LuxColor {
     static let gold = Color(hex: "D4AF37")
     static let goldMuted = Color.lux(light: Color(hex: "6E5A2C"), dark: Color(hex: "8C7A4F"))
     static let goldBg = Color(hex: "D4AF37").opacity(0.078)
+    /// Text/glyph color for content sitting directly on a filled-gold
+    /// surface (`LuxPrimaryButtonStyle`, `LuxCheckbox`'s check mark) — the
+    /// same warm near-black used elsewhere in the app for the same purpose
+    /// (`DayJourneyPath`'s done node, `RankBar`'s level numeral,
+    /// `DayCompleteView`'s moon icon), rather than pure `.black`, which
+    /// reads slightly harsher against gold. Constant across modes, like
+    /// `gold` itself.
+    static let goldText = Color(hex: "1A1207")
     /// Success state reuses gold — this palette has no green.
     static let success = gold
     static let divider = cardBorder.opacity(0.5)
+    /// Border for `LuxGhostButtonStyle`'s default (non-gold-tinted) use —
+    /// distinct from `goldMuted`, which is reserved for ghost buttons that
+    /// specifically want a warm gold hairline (e.g. "Add today's reflection").
+    static let ghostBorder = cardBorder
+
+    // MARK: Day-timeline semantic aliases
+    //
+    // Named per-state rather than inlining `gold`/`textSecondary`/`.opacity`
+    // at each `LuxDayTimeline` call site, so the three states (a completed
+    // session, the next one still open to complete, and one not yet
+    // reachable) read as a deliberate three-way state rather than a
+    // two-way done/not-done toggle with opacity bolted on.
+    static let timelineDone = gold
+    static let timelineNext = textSecondary
+    static let timelineLocked = textSecondary.opacity(0.3)
+    /// The hairline connecting two timeline nodes once the left one is
+    /// done — a faint gold thread trailing the completed session, distinct
+    /// from `divider`, which connects nodes that aren't there yet.
+    static let timelineLineDone = gold.opacity(0.3)
 }
 
 /// Font helpers for the Lux system. Names point at Cormorant Garamond,

@@ -8,7 +8,7 @@ import Supabase
 /// Project: `tenscrolls` (Supabase org "Nokael", free tier). Schema + RPCs are
 /// defined in DATABASE_SCHEMA.md and the `caravan_core_schema` /
 /// `fix_function_search_path` migrations applied to that project.
-enum SupabaseConfig {
+nonisolated enum SupabaseConfig {
     static let projectURL = URL(string: "https://shodbktjnfadxalegapd.supabase.co")!
 
     /// Publishable key — safe to ship in the client, same trust level as the

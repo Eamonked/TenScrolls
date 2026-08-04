@@ -94,6 +94,18 @@ struct ScrollReaderView: View {
         !scroll.title.isEmpty || !scroll.notes.isEmpty || !scroll.theme.isEmpty
     }
 
+    /// Whether the session currently in-window (dawn/midday/dusk) has already
+    /// been sealed for today. Distinct from `sealFired`, which only tracks
+    /// whether *this view instance* fired a seal — reopening the scroll after
+    /// closing and relaunching gets a fresh view (and fresh `sealFired`), so
+    /// without this check a completed session's friction gate could open
+    /// again and re-fire `store.toggleSession`, which *toggles* and would
+    /// silently un-seal an already-completed session.
+    private var alreadySealedToday: Bool {
+        guard let session = eligibleSession else { return false }
+        return store.state.log[DateKey.today()]?.isCompleted(for: session) ?? false
+    }
+
     // MARK: - Body
 
     var body: some View {
@@ -155,9 +167,11 @@ struct ScrollReaderView: View {
             }
         }
         .onReceive(timer) { currentTime = $0 }
-        // Surface the seal sheet once the gate opens (auto-prompt)
+        // Surface the seal sheet once the gate opens (auto-prompt). Guarded
+        // against `alreadySealedToday` so reopening an already-sealed scroll
+        // later in the same window doesn't re-prompt and risk un-sealing it.
         .onChange(of: canSeal) { _, newValue in
-            if newValue && !sealFired && !showSealSheet {
+            if newValue && !sealFired && !showSealSheet && !alreadySealedToday {
                 showSealSheet = true
             }
         }
@@ -183,8 +197,8 @@ struct ScrollReaderView: View {
                     .frame(width: 44, height: 44)
             }
             .buttonStyle(.plain)
-            .disabled(hasContent && !canSeal)
-            .opacity(hasContent && !canSeal ? 0.35 : 1)
+            .disabled(hasContent && !canSeal && !alreadySealedToday)
+            .opacity(hasContent && !canSeal && !alreadySealedToday ? 0.35 : 1)
 
             Spacer()
 
@@ -280,11 +294,25 @@ struct ScrollReaderView: View {
                         readingStartTime = Date()
                         onReadingStarted?()
                     }
+                    // A fresh view instance (e.g. reopening the scroll after
+                    // closing it) starts with `sealFired = false` regardless
+                    // of whether today's session is already sealed. Seed it
+                    // here so the friction gate can't re-fire `sealReading()`
+                    // and un-seal an already-completed session.
+                    if alreadySealedToday {
+                        sealFired = true
+                    }
                 }
 
-                // Breathing dot footer — "take your time" nudge
+                // Footer: "take your time" nudge while still reading, then a
+                // persistent seal affordance once the last page is reached —
+                // this is the only way back into the seal sheet after it's
+                // been dismissed/minimized without sealing (there's no other
+                // path to reopen it once the auto-prompt has fired once).
                 if !hasReachedLastPage {
                     breathingFooter
+                } else {
+                    sealFooter
                 }
             }
         }
@@ -310,6 +338,57 @@ struct ScrollReaderView: View {
                 startPoint: .top,
                 endPoint: .bottom
             )
+        )
+    }
+
+    // MARK: - Seal footer
+
+    /// Persistent seal affordance once the last page is reached — replaces
+    /// `breathingFooter`. This is the *only* way back into `SealReadingSheet`
+    /// after it's been dismissed without sealing, since the auto-prompt in
+    /// `.onChange(of: canSeal)` only fires once per false→true transition.
+    /// Once the session is already sealed, this collapses into a quiet
+    /// "Sealed" confirmation instead of a tappable CTA — reopening the sheet
+    /// from here and tapping Seal again would call `sealReading()` a second
+    /// time, and `store.toggleSession` *toggles*, so that would silently
+    /// un-seal a completed session.
+    private var sealFooter: some View {
+        Group {
+            if alreadySealedToday {
+                HStack(spacing: 8) {
+                    Image(systemName: "checkmark.seal.fill")
+                        .font(.system(size: 12))
+                        .foregroundColor(LuxColor.success)
+                    Text("SEALED")
+                        .luxEyebrow(color: LuxColor.textSecondary)
+                }
+                .frame(maxWidth: .infinity)
+                .padding(.bottom, 36)
+                .background(sealFooterGradient)
+            } else {
+                Button {
+                    showSealSheet = true
+                } label: {
+                    HStack(spacing: 6) {
+                        Text("SEAL THIS READING")
+                        Image(systemName: "arrow.right")
+                            .font(.system(size: 10, weight: .semibold))
+                    }
+                    .luxEyebrow(color: canSeal ? LuxColor.success : LuxColor.textSecondary)
+                }
+                .buttonStyle(.plain)
+                .frame(maxWidth: .infinity)
+                .padding(.bottom, 36)
+                .background(sealFooterGradient)
+            }
+        }
+    }
+
+    private var sealFooterGradient: some View {
+        LinearGradient(
+            colors: [LuxColor.bg.opacity(0), LuxColor.bg.opacity(0.96)],
+            startPoint: .top,
+            endPoint: .bottom
         )
     }
 

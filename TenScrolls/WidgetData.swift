@@ -15,7 +15,7 @@ import Foundation
 /// is unavailable (missing/mismatched entitlement, disk error, etc) — this
 /// also keeps existing installs' already-persisted UserDefaults data
 /// readable until the next `save` migrates it to the container.
-enum WidgetStorage {
+nonisolated enum WidgetStorage {
     /// The App Group identifier, resolved from the `APP_GROUP_IDENTIFIER`
     /// build setting (see the project's shared build settings) which Xcode
     /// substitutes into each target's Info.plist as `AppGroupIdentifier`.
@@ -42,7 +42,11 @@ enum WidgetStorage {
 
     /// Fallback storage: the App Group's suite `UserDefaults`. Also where
     /// installs from before file-based storage existed may still have data.
-    static let sharedDefaults: UserDefaults? = appGroupIdentifier.flatMap { UserDefaults(suiteName: $0) }
+    /// `(unsafe)` because `UserDefaults` doesn't conform to `Sendable` on
+    /// this SDK, even though it's Apple-documented as thread-safe — this is
+    /// the standard escape hatch for known-safe-but-unannotated Foundation
+    /// types under strict concurrency, not a real safety gap.
+    nonisolated(unsafe) static let sharedDefaults: UserDefaults? = appGroupIdentifier.flatMap { UserDefaults(suiteName: $0) }
 
     /// Logs the App Group's resolution state at startup (see
     /// `TenScrollsApp.init` and `TenScrollsWidgetBundle.init`) so a missing
@@ -96,7 +100,7 @@ enum WidgetStorage {
 
 // MARK: - Daily Practice Widget Data
 
-struct WidgetData: Codable {
+nonisolated struct WidgetData: Codable {
     var streak: Int
     var activeScrollRoman: String
     var activeScrollTitle: String
@@ -121,7 +125,7 @@ struct WidgetData: Codable {
 
 // MARK: - Journal Widget Data
 
-struct JournalWidgetData: Codable {
+nonisolated struct JournalWidgetData: Codable {
     var entries: [JournalWidgetEntry]
     var themeId: String
     var lastUpdated: Date
@@ -137,7 +141,7 @@ struct JournalWidgetData: Codable {
         WidgetStorage.load(JournalWidgetData.self, filename: filename, defaultsKey: defaultsKey)
     }
 
-    struct JournalWidgetEntry: Codable, Identifiable {
+    nonisolated struct JournalWidgetEntry: Codable, Identifiable {
         let id: String
         let text: String
         let date: String

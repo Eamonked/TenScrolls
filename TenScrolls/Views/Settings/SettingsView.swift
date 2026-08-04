@@ -344,7 +344,16 @@ struct SettingsView: View {
         exportURL = url
     }
 
+    /// The Commonplace Book PDF is a full transcript of every scroll's
+    /// notes (see `CommonplaceBook`'s doc comment) — the same Plus-gated
+    /// scroll content as reading a scroll in-app, just exported. Gated the
+    /// same way as opening a scroll (`ContentView.attemptOpenScroll`) so it
+    /// can't be used to route around that gate.
     private func exportCommonplace() {
+        guard store.state.hasPlusAccess else {
+            store.shouldShowDay30Paywall = true
+            return
+        }
         if let url = CommonplaceBook.makePDF(state: store.state, themeColor: LuxColor.gold) {
             exportURL = url
         } else {
