@@ -30,7 +30,8 @@ actor SupabaseSubscription {
                 trialEndDate: nil,
                 plusSince: nil,
                 daysUntilTrialEnd: 0,
-                isTrialActive: false
+                isTrialActive: false,
+                purchasedProductId: nil
             )
         }
         

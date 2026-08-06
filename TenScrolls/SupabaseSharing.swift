@@ -80,6 +80,56 @@ actor SupabaseSharing {
         }
     }
 
+    private struct LeaveGroupResponse: Decodable {
+        let success: Bool
+        let error: String?
+        let group_deleted: Bool?
+    }
+
+    private struct DeleteGroupResponse: Decodable {
+        let success: Bool
+        let error: String?
+    }
+
+    /// Removes the caller from a group. If they were the last member, the
+    /// server deletes the group itself — `groupDeleted` in the result
+    /// reflects that so the caller can decide how to update local state.
+    func leaveGroup(id: UUID) async -> (success: Bool, groupDeleted: Bool, error: String?) {
+        do {
+            try await ensureSignedIn()
+            let response: LeaveGroupResponse = try await SupabaseConfig.client
+                .rpc("leave_reading_group", params: ["p_group_id": id.uuidString])
+                .execute()
+                .value
+            if !response.success {
+                print("⚠️ leaveGroup(\(id)) failed: \(response.error ?? "unknown_error")")
+            }
+            return (response.success, response.group_deleted ?? false, response.error)
+        } catch {
+            logSupabaseFailure("leaveGroup(\(id)) failed", error)
+            return (false, false, "network_error")
+        }
+    }
+
+    /// Creator-only. Force-deletes a group regardless of remaining members;
+    /// the server rejects this with `not_authorized` for non-creators.
+    func deleteGroup(id: UUID) async -> (success: Bool, error: String?) {
+        do {
+            try await ensureSignedIn()
+            let response: DeleteGroupResponse = try await SupabaseConfig.client
+                .rpc("delete_reading_group", params: ["p_group_id": id.uuidString])
+                .execute()
+                .value
+            if !response.success {
+                print("⚠️ deleteGroup(\(id)) failed: \(response.error ?? "unknown_error")")
+            }
+            return (response.success, response.error)
+        } catch {
+            logSupabaseFailure("deleteGroup(\(id)) failed", error)
+            return (false, "network_error")
+        }
+    }
+
     // MARK: - Scroll Sharing
 
     private struct ShareScrollParams: Encodable {
@@ -114,7 +164,7 @@ actor SupabaseSharing {
             }
             return response.success
         } catch {
-            print("⚠️ shareScroll(toTraderCode: \(toTraderCode)) failed: \(error)")
+            logSupabaseFailure("shareScroll(toTraderCode: \(toTraderCode)) failed", error)
             return false
         }
     }
@@ -138,7 +188,7 @@ actor SupabaseSharing {
             }
             return response.success
         } catch {
-            print("⚠️ shareScroll(toGroupId: \(toGroupId)) failed: \(error)")
+            logSupabaseFailure("shareScroll(toGroupId: \(toGroupId)) failed", error)
             return false
         }
     }

@@ -493,11 +493,11 @@ struct PDFReaderView: View {
         "\u{201C}\(excerpt)\u{201D}\n\n\u{2014} \(bookTitle)"
     }
 
-    /// Gates "Save as Scroll" on Plus access, same rationale as
-    /// `LibraryReaderBody.requestSaveAsScroll` — writing into a scroll's
+    /// Gates "Save as Scroll" via AppFeature.saveAsScroll, same rationale
+    /// as `LibraryReaderBody.requestSaveAsScroll` — writing into a scroll's
     /// notes is an edit of Plus-gated scroll content.
     private func requestSaveAsScroll(_ excerpt: String) {
-        guard store.state.hasPlusAccess else {
+        guard store.isAccessible(.saveAsScroll) else {
             showScrollPlusGate = true
             return
         }

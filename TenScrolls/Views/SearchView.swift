@@ -48,15 +48,20 @@ struct SearchView: View {
                                     Button {
                                         onOpenScroll(scroll)
                                     } label: {
-                                        // Scroll content is a Plus-only surface (see
-                                        // ContentView.attemptOpenScroll) — a free reader
-                                        // shouldn't be able to read scroll notes via a
-                                        // search-result preview either. The row still
-                                        // shows (so search stays useful for finding which
-                                        // scroll matched), but tapping still routes
-                                        // through the same gate/paywall as opening the
-                                        // scroll any other way.
-                                        ScrollMatchRow(scroll: scroll, themeOption: theme, colors: colors, redactPreview: !store.state.hasPlusAccess)
+                                        // Scroll content is gated by
+                                        // AppFeature.scrollSearchPreview (see
+                                        // ContentView.attemptOpenScroll for
+                                        // the equivalent gate on opening a
+                                        // scroll directly) — a free reader
+                                        // shouldn't be able to read scroll
+                                        // notes via a search-result preview
+                                        // either. The row still shows (so
+                                        // search stays useful for finding
+                                        // which scroll matched), but tapping
+                                        // still routes through the same
+                                        // gate/paywall as opening the scroll
+                                        // any other way.
+                                        ScrollMatchRow(scroll: scroll, themeOption: theme, colors: colors, redactPreview: !store.isAccessible(.scrollSearchPreview))
                                     }
                                 }
                             }

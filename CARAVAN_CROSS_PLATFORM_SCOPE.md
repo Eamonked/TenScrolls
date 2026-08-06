@@ -1,5 +1,13 @@
 # Caravan — Cross-Platform Build Scope (iOS + Android)
 
+> **Note (2026-08-04):** `CARAVAN_SOCIAL_SCOPE.md`'s "Current State" table
+> has since been corrected — workstreams A–D there (backend, trader codes,
+> invites, share seal) are now done; only workstream E (server-derived
+> leaderboard stats) is still open. This doc's own content below is
+> forward-looking Android/cross-platform planning and is unaffected by that
+> — no Android code exists yet either way — but treat any references below
+> to "the backend is a stub" as describing the pre-Supabase state, not today.
+
 **Supersedes/extends:** `CARAVAN_SOCIAL_SCOPE.md`. That doc assumed a single
 Swift client talking to a backend. This doc adds the constraint that changes
 the shape of the work: **the backend must serve an iOS client and an Android

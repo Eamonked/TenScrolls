@@ -162,12 +162,13 @@ struct ScrollShareDetailView: View {
                             .font(AppFont.mono(11)).foregroundColor(colors.textFaint)
                     }
 
-                    // A shared scroll's notes are the same Plus-gated scroll
-                    // content as any other — a free reader shouldn't get to
-                    // read them here just because a friend sent them, any
-                    // more than they could open one of their own scrolls.
+                    // A shared scroll's notes are gated by
+                    // AppFeature.scrollImport, same as any other scroll
+                    // content — a free reader shouldn't get to read them
+                    // here just because a friend sent them, any more than
+                    // they could open one of their own scrolls.
                     if !share.notes.isEmpty {
-                        if store.state.hasPlusAccess {
+                        if store.isAccessible(.scrollImport) {
                             CardView {
                                 Text(share.notes)
                                     .font(.system(size: 14)).foregroundColor(colors.text)
@@ -184,7 +185,7 @@ struct ScrollShareDetailView: View {
 
                     HStack(spacing: 10) {
                         Button {
-                            if store.state.hasPlusAccess {
+                            if store.isAccessible(.scrollImport) {
                                 showSlotPicker = true
                             } else {
                                 store.shouldShowDay30Paywall = true

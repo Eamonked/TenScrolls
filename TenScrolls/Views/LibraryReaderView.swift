@@ -321,11 +321,11 @@ struct LibraryReaderBody: View {
 
     /// Single entry point for both "Save as Scroll" triggers (a text
     /// selection's menu action, and "Make this chapter a Scroll" from the
-    /// table of contents) — gates on Plus access before staging the excerpt
-    /// for `ScrollDestinationSheet`, same as `ContentView.attemptOpenScroll`
-    /// gates opening a scroll to read.
+    /// table of contents) — gates on AppFeature.saveAsScroll before staging
+    /// the excerpt for `ScrollDestinationSheet`, same as
+    /// `ContentView.attemptOpenScroll` gates opening a scroll to read.
     private func requestSaveAsScroll(_ text: String, suggestedTitle: String?) {
-        guard store.state.hasPlusAccess else {
+        guard store.isAccessible(.saveAsScroll) else {
             showScrollPlusGate = true
             return
         }

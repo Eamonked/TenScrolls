@@ -1,5 +1,26 @@
 # TenScrolls Database Schema & Server-Side Validation
 
+> **Status (corrected 2026-08-04): this is a design doc, not a description of
+> what's deployed.** Verified against the actual migrations (`002`–`007`) and
+> `SupabaseLeaderboard.swift`:
+> - `users` and `leaderboard_snapshots` **are** live (migration `002` alters
+>   `leaderboard_snapshots` directly, and the app reads/writes it today).
+> - `session_completions`, `day_summaries`, and the `complete_session` /
+>   `check_session_window` / `check_grace_period` / `update_day_summary` /
+>   `calculate_current_streak` RPCs described below **are not deployed** —
+>   there's no migration for them and no code path calls `complete_session`.
+>   They're referenced in `SupabaseLeaderboard.swift` only as a named
+>   follow-up (see `CARAVAN_SOCIAL_SCOPE.md`, workstream E).
+> - Today, `leaderboard_snapshots` rows (xp, streak, etc.) are published
+>   directly from client-side `AppState` via `publish()` — not derived from
+>   validated session data as this doc's "Anti-Cheat Measures Summary"
+>   implies. Session-level anti-cheat itself is real (see
+>   `ANTI_CHEAT_IMPLEMENTATION.md`'s status note) but it's local-only; it
+>   doesn't yet feed the leaderboard.
+>
+> Run `check_db_schema.swift` against the live project to reconfirm this if
+> migrations have changed since.
+
 ## Overview
 
 This document defines the Postgres schema and RPC functions for server-side validation of reading sessions. The design prevents gaming through:

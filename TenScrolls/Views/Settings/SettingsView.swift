@@ -1,4 +1,5 @@
 import SwiftUI
+import StoreKit
 
 // MARK: - Settings View
 
@@ -14,6 +15,7 @@ struct SettingsView: View {
     @State private var showDocumentImport = false
     @State private var showResetConfirm = false
     @State private var resetTyped = ""
+    @State private var showManageSubscriptions = false
     #if canImport(UIKit)
     @State private var exportURL: URL?
     @State private var exportError = false
@@ -31,6 +33,7 @@ struct SettingsView: View {
                         appearanceSection
                         librarySection
                         atelierSection
+                        membershipSection
                         archiveSection
                         dangerSection
                         versionFooter
@@ -72,6 +75,7 @@ struct SettingsView: View {
         .sheet(isPresented: $showDocumentImport) {
             DocumentImportSheet()
         }
+        .manageSubscriptionsSheet(isPresented: $showManageSubscriptions)
         #if canImport(UIKit)
         .confirmationDialog(
             "Export your journey",
@@ -223,6 +227,54 @@ struct SettingsView: View {
         }
     }
 
+    // MARK: - Membership
+
+    /// Only shown once the reader actually has Plus (trial or paid) — free
+    /// readers have nothing to manage. Routes to Apple's native sheet via
+    /// `manageSubscriptionsSheet`, so cancellation always reflects the real
+    /// App Store state instead of us tracking it ourselves.
+    @ViewBuilder
+    private var membershipSection: some View {
+        if store.state.hasPlusAccess {
+            VStack(alignment: .leading, spacing: 12) {
+                sectionEyebrow("MEMBERSHIP")
+                LuxCard {
+                    HStack(spacing: 14) {
+                        Image(systemName: "crown")
+                            .font(.system(size: 18, weight: .light))
+                            .foregroundColor(LuxColor.textSecondary)
+                            .frame(width: 28)
+                        VStack(alignment: .leading, spacing: 3) {
+                            Text(planStatusSuffix ?? "Plus")
+                                .font(LuxFont.serif(14))
+                                .foregroundColor(LuxColor.textPrimary)
+                            Text("Manage or cancel anytime in the App Store")
+                                .font(LuxFont.sans(12))
+                                .foregroundColor(LuxColor.textSecondary)
+                        }
+                        Spacer()
+                        Button {
+                            showManageSubscriptions = true
+                        } label: {
+                            Text("Manage")
+                                .font(LuxFont.sans(10, weight: .medium))
+                                .tracking(1.2)
+                                .textCase(.uppercase)
+                                .foregroundColor(LuxColor.goldMuted)
+                                .padding(.horizontal, 12)
+                                .padding(.vertical, 7)
+                                .overlay(
+                                    RoundedRectangle(cornerRadius: 8, style: .continuous)
+                                        .stroke(LuxColor.cardBorder, lineWidth: 0.5)
+                                )
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+            }
+        }
+    }
+
     // MARK: - Archive / Export
 
     private var archiveSection: some View {
@@ -269,11 +321,29 @@ struct SettingsView: View {
 
     // MARK: - Version footer
 
+    /// "Plus", "Plus Trial", or "Plus · Annual"/"Monthly"/"Lifetime" once a
+    /// plan is known (see `AppStore.purchasedPlanLabel`) — `nil` for a free
+    /// reader, so the footer stays exactly as it was for them.
+    private var planStatusSuffix: String? {
+        guard store.state.hasPlusAccess else { return nil }
+        if store.state.cachedSubscriptionStatus == .trialing {
+            return "Plus Trial"
+        }
+        if let label = store.purchasedPlanLabel {
+            return "Plus \u{00B7} \(label)"
+        }
+        return "Plus"
+    }
+
     private var versionFooter: some View {
         let code = store.state.traderCode
         let days = store.state.totalDaysCompleted
         let version = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "1.0"
-        return Text("Version \(version) \u{00B7} \(days) of 300 days \u{00B7} \(code)")
+        var line = "Version \(version) \u{00B7} \(days) of 300 days \u{00B7} \(code)"
+        if let plan = planStatusSuffix {
+            line += " \u{00B7} \(plan)"
+        }
+        return Text(line)
             .font(LuxFont.mono(10))
             .tracking(0.5)
             .foregroundColor(LuxColor.textMuted)
@@ -346,11 +416,12 @@ struct SettingsView: View {
 
     /// The Commonplace Book PDF is a full transcript of every scroll's
     /// notes (see `CommonplaceBook`'s doc comment) — the same Plus-gated
-    /// scroll content as reading a scroll in-app, just exported. Gated the
-    /// same way as opening a scroll (`ContentView.attemptOpenScroll`) so it
-    /// can't be used to route around that gate.
+    /// scroll content as reading a scroll in-app, just exported. Gated via
+    /// AppFeature.commonplaceExport, same as opening a scroll
+    /// (`ContentView.attemptOpenScroll`) so it can't be used to route
+    /// around that gate.
     private func exportCommonplace() {
-        guard store.state.hasPlusAccess else {
+        guard store.isAccessible(.commonplaceExport) else {
             store.shouldShowDay30Paywall = true
             return
         }

@@ -153,9 +153,18 @@ func getTimeline(...) {
 
 ---
 
-### 3. Missing CloudKit Backend 🔴 CRITICAL
+### 3. Missing CloudKit Backend 🔴 CRITICAL — ✅ STALE, RESOLVED (2026-08-04)
 
-**Issue:**
+> This section describes the state when the backend was `CloudKitLeaderboard`
+> (stubbed). It has since been replaced with a real Supabase backend
+> (`SupabaseLeaderboard.swift`): the leaderboard, friend lookup, and cheers
+> are all live and server-backed, with server-enforced trader-code
+> uniqueness and cheer rate-limiting. See `CARAVAN_SOCIAL_SCOPE.md`'s
+> corrected status table for what's actually still open (leaderboard stats
+> are still client-reported rather than derived from validated sessions —
+> a real but much narrower gap than "non-functional feature" below implies).
+
+**Issue (historical, no longer accurate):**
 ```swift
 // In CloudKitLeaderboard.swift
 func publish(code: String, snapshot: FriendSnapshot) async {

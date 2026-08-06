@@ -35,7 +35,22 @@ struct AppState: Codable, Equatable, Sendable {
     
     /// Cached subscription status from the server. Optional for backward compatibility.
     var cachedSubscriptionStatus: SubscriptionStatus? = nil
-    
+
+    /// Local-only cache of StoreKit's own on-device entitlement truth
+    /// (`StoreKitManager.hasActiveEntitlement()`), kept in sync by
+    /// `AppStore.refreshLocalEntitlement()` (foreground/launch),
+    /// `AppStore.activateSubscription(signedTransaction:)` (right after a
+    /// purchase, before the server round trip completes), and
+    /// `AppStore.reconcileStoreKitEntitlement()` (on revocation). This is
+    /// what lets `hasPlusAccess` below keep granting access when the
+    /// Supabase-verified `cachedSubscriptionStatus` can't be reached but
+    /// Apple has already confirmed a real purchase on-device. Optional for
+    /// backward compatibility — state persisted before this field existed
+    /// decodes to `nil`, treated as "no local entitlement" by
+    /// `hasPlusAccess`'s `?? false` below, same as everyone else's first
+    /// launch on a fresh install.
+    var localEntitlementActive: Bool? = nil
+
     /// Whether the Day 3 trial offer has been shown (and dismissed/accepted).
     /// Prevents showing it repeatedly.
     var hasShownTrialOffer: Bool? = nil
@@ -78,9 +93,12 @@ struct AppState: Codable, Equatable, Sendable {
         cachedSubscriptionStatus ?? .free
     }
     
-    /// Whether user has Plus access (active subscription or active trial)
+    /// Whether user has Plus access (active subscription or active trial).
+    /// ORs the server-verified status with the local StoreKit entitlement
+    /// truth, so a real Apple entitlement still unlocks Plus content when
+    /// Supabase can't be reached — see `localEntitlementActive`'s doc comment.
     var hasPlusAccess: Bool {
-        subscriptionStatus.hasAccess
+        subscriptionStatus.hasAccess || (localEntitlementActive ?? false)
     }
 
     static func defaultState() -> AppState {

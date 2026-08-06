@@ -1,5 +1,14 @@
 # TenScrolls Anti-Cheat Implementation Guide
 
+> **Status (corrected 2026-08-04):** Layers 1, 3, and 4 below are live.
+> Layer 2 ("Server-Side Validation") is **not** — the `complete_session` RPC
+> and `session_completions` table it depends on were never deployed; see the
+> status note at the top of `DATABASE_SCHEMA.md`. The app today is the
+> "Local-First (Current)" data flow only, described further down this file;
+> the "Server-Synced (Future State)" flow is still a plan. Also, the friction
+> gate's actual mechanism differs from what's shown in Layer 3 below — see
+> the correction inline there.
+
 ## Problem Statement
 
 Users could game the habit tracker by:
@@ -90,23 +99,27 @@ CREATE OR REPLACE FUNCTION complete_session(
 - Visual progress indicators guide the user
 - Close button disabled until requirements met
 
-**How it works:**
+**How it works (corrected — see actual `Sheets.swift`):**
+The doc originally described scroll-offset detection via `GeometryReader` /
+`ScrollOffsetPreferenceKey` and a `hasScrolledToBottom` flag. The real
+implementation instead uses `TextPagination.swift`'s page tracking:
 ```swift
 // In ScrollEditorSheet (Sheets.swift)
-@State private var hasScrolledToBottom = false
-@State private var readingStartTime: Date?
-
 private var canComplete: Bool {
-    hasScrolledToBottom && hasMetTimeRequirement
+    editing || (hasReachedLastPage && hasMetTimeRequirement)
 }
 
-// Scroll tracking with GeometryReader
-.onPreferenceChange(ScrollOffsetPreferenceKey.self) { value in
-    if value < -50 { // Detected bottom scroll
-        hasScrolledToBottom = true
-    }
+private var hasMetTimeRequirement: Bool {
+    guard let startTime = readingStartTime else { return false }
+    return currentTime.timeIntervalSince(startTime) >= minimumReadingTimeSeconds
 }
+
+private var minimumReadingTimeSeconds: TimeInterval { 30 } // still 30s, matches this doc
 ```
+`hasReachedLastPage` comes from the paginated reader (`TextPagination.swift`)
+rather than a raw scroll offset. The 30-second minimum and the overall
+"can't complete without reaching the end + waiting" behavior this doc
+describes are accurate — only the underlying detection mechanism changed.
 
 **Visual feedback:**
 - "Scroll to the end to complete" with down arrow

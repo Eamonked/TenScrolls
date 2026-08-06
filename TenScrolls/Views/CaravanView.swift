@@ -37,7 +37,14 @@ struct CaravanView: View {
     @State private var selectedShare: PendingScrollShare?
     @State private var groupNameDraft = ""
     @State private var groupCodeDraft = ""
+    @State private var groupPendingDelete: ReadingGroupSummary?
     @State private var groupMessage: String?
+    /// Live StoreKit price for the featured Plus plan (per
+    /// `pricingConfigSnapshot.featuredProductId`), replacing the stale
+    /// hardcoded "$500/yr" placeholder on the locked-ledger CTA. `nil`
+    /// until loaded, in which case the CTA just omits the price rather
+    /// than showing a guess.
+    @State private var featuredPlusPrice: String? = nil
 
     var myStreak: Int { store.state.currentStreak }
     var myLevel: Int { store.state.levelInfo().level }
@@ -104,6 +111,9 @@ struct CaravanView: View {
         #endif
         .sheet(item: $selectedShare) { share in
             ScrollShareDetailView(share: share)
+        }
+        .task {
+            featuredPlusPrice = await StoreKitManager.shared.displayPrice(for: store.pricingConfigSnapshot.featuredProductId)
         }
     }
 
@@ -320,7 +330,7 @@ struct CaravanView: View {
     private var inviteSection: some View {
         VStack(alignment: .leading, spacing: 10) {
             Text("INVITE").luxEyebrow()
-            if store.state.hasPlusAccess {
+            if store.isAccessible(.caravanInvite) {
                 VStack(alignment: .leading, spacing: 8) {
                     HStack(spacing: 12) {
                         TextField("", text: $friendInput, prompt: Text("Enter trader code").font(.custom("CormorantGaramond-Italic", size: 16)).foregroundColor(LuxColor.textMuted))
@@ -363,6 +373,17 @@ struct CaravanView: View {
     }
 
     private func submitFriend() {
+        // AppFeature.caravanAddFriend is checked here (not just gating the
+        // invite card's UI above) so a `tenscrolls://addfriend?code=...`
+        // deep link — which calls this directly via
+        // `consumePendingFriendCode`, bypassing the card entirely — is
+        // covered by the same table row. It defaults to `false` (free),
+        // matching today's actual behavior; flip it in Supabase if that
+        // deep-link bypass should also require Plus.
+        guard store.isAccessible(.caravanAddFriend) else {
+            store.shouldShowDay30Paywall = true
+            return
+        }
         let code = friendInput.trimmingCharacters(in: .whitespacesAndNewlines).uppercased()
         guard !code.isEmpty else { return }
         if code == store.state.traderCode { friendError = "That's your own code."; return }
@@ -397,7 +418,7 @@ struct CaravanView: View {
                             myStreak: myStreak,
                             cheerSent: sentLocallyToday || ackSentToday,
                             cheerSeen: ackSentToday && (ack?.acknowledged ?? false),
-                            hasPlusAccess: store.state.hasPlusAccess,
+                            hasPlusAccess: store.isAccessible(.caravanCheer),
                             onRemove: { store.removeFriend(code) },
                             onCheer: { await sendCheer(code) }
                         )
@@ -470,9 +491,53 @@ struct CaravanView: View {
             }
         }
         .padding(.vertical, 6)
+        .contentShape(Rectangle())
+        .swipeActions(edge: .trailing) {
+            Button(role: .destructive) {
+                Task { await submitLeaveGroup(group) }
+            } label: {
+                Label("Leave", systemImage: "rectangle.portrait.and.arrow.right")
+            }
+        }
+        .contextMenu {
+            // The client has no way to tell who the creator is (that field
+            // isn't returned by list_my_reading_groups), so this can't be
+            // gated on "am I the creator". Instead: only offer Delete when
+            // this member is the only one left — at that point delete and
+            // leave are equivalent in effect, so showing it is safe for
+            // anyone, creator or not. A creator deleting a populous group
+            // isn't reachable from this menu yet.
+            if group.member_count == 1 {
+                Button(role: .destructive) {
+                    groupPendingDelete = group
+                } label: {
+                    Label("Delete Group", systemImage: "trash")
+                }
+            }
+        }
+        .alert(
+            "Delete \u{201C}\(group.name)\u{201D}?",
+            isPresented: Binding(
+                get: { groupPendingDelete?.id == group.id },
+                set: { if !$0 { groupPendingDelete = nil } }
+            )
+        ) {
+            Button("Delete", role: .destructive) { Task { await submitDeleteGroup(group) } }
+            Button("Cancel", role: .cancel) { groupPendingDelete = nil }
+        } message: {
+            Text("This removes every member and can't be undone.")
+        }
     }
 
     private func submitCreateGroup() async {
+        // AppFeature.caravanJoinGroup covers both creating and joining a
+        // group — they're the same underlying capability from a gating
+        // standpoint. Defaults to `false` (free), matching today's actual
+        // behavior.
+        guard store.isAccessible(.caravanJoinGroup) else {
+            store.shouldShowDay30Paywall = true
+            return
+        }
         switch await store.createReadingGroup(name: groupNameDraft) {
         case .success(let msg): groupNameDraft = ""; groupMessage = msg
         case .failure(let msg): groupMessage = msg
@@ -481,8 +546,32 @@ struct CaravanView: View {
     }
 
     private func submitJoinGroup() async {
+        // Also covers the `tenscrolls://joingroup?code=...` deep-link path
+        // (`consumePendingGroupCode` calls this directly), same rationale
+        // as `submitFriend`'s guard above.
+        guard store.isAccessible(.caravanJoinGroup) else {
+            store.shouldShowDay30Paywall = true
+            return
+        }
         switch await store.joinReadingGroup(code: groupCodeDraft) {
         case .success(let msg): groupCodeDraft = ""; groupMessage = msg
+        case .failure(let msg): groupMessage = msg
+        }
+        clearGroupMessageAfterDelay()
+    }
+
+    private func submitLeaveGroup(_ group: ReadingGroupSummary) async {
+        switch await store.leaveReadingGroup(id: group.group_id) {
+        case .success(let msg): groupMessage = msg
+        case .failure(let msg): groupMessage = msg
+        }
+        clearGroupMessageAfterDelay()
+    }
+
+    private func submitDeleteGroup(_ group: ReadingGroupSummary) async {
+        groupPendingDelete = nil
+        switch await store.deleteReadingGroup(id: group.group_id) {
+        case .success(let msg): groupMessage = msg
         case .failure(let msg): groupMessage = msg
         }
         clearGroupMessageAfterDelay()
@@ -579,7 +668,7 @@ struct CaravanView: View {
             Button {
                 store.shouldShowDay30Paywall = true
             } label: {
-                Text("Enter the Ledger \u{2014} $500/yr")
+                Text(featuredPlusPrice.map { "Enter the Ledger \u{2014} \($0)" } ?? "Enter the Ledger")
             }
             .buttonStyle(LuxLedgerButtonStyle())
         }

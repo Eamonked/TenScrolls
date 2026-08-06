@@ -7,8 +7,13 @@ struct TrialOfferView: View {
     @EnvironmentObject var store: AppStore
     @Environment(\.dismiss) private var dismiss
     @State private var isStarting = false
+    /// Localized price/period for the featured plan (e.g. "$39.99/yr"),
+    /// replacing the hardcoded "$4.99/month" once StoreKit has loaded it.
+    /// Falls back to the hardcoded string while `nil`.
+    @State private var storePrice: String? = nil
 
     private var theme: ThemeOption { Palette.theme(for: store.state.activeThemeId) }
+    private var trialDays: Int { store.pricingConfigSnapshot.trialDays }
 
     var body: some View {
         ZStack {
@@ -67,14 +72,17 @@ struct TrialOfferView: View {
                     .padding(.horizontal)
                 
                 // Trial info
-                Text("Try Plus free for 10 days")
+                Text("Try Plus free for \(trialDays) days")
                     .font(.subheadline.bold())
                     .padding(.top, 16)
                 
-                Text("Then $4.99/month. Cancel anytime.")
+                Text("Then \(storePrice ?? "$4.99/month"). Cancel anytime.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .padding(.bottom, 24)
+                    .task {
+                        storePrice = await StoreKitManager.shared.displayPrice(for: store.pricingConfigSnapshot.featuredProductId)
+                    }
                 
                 // Actions
                 VStack(spacing: 12) {

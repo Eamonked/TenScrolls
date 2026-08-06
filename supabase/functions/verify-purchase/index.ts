@@ -11,9 +11,11 @@
 //      certificates using Apple's official server library — StoreKit's
 //      on-device VerificationResult already checked this once, but that
 //      result never leaves the device, so the server has to redo it.
-//   3. Confirms the transaction is for OUR product
-//      (ekme.TenScrolls.plus.monthly), isn't revoked, and (for a
-//      subscription) hasn't expired.
+//   3. Confirms the transaction is for one of OUR products
+//      (ekme.TenScrolls.plus.{monthly,annual,lifetime} — see
+//      ALLOWED_PRODUCT_IDS below, which must stay in sync with
+//      StoreKitManager.allProductIDs on the client), isn't revoked, and
+//      (for a subscription) hasn't expired.
 //   4. Only then calls activate_subscription_verified() — a Postgres RPC
 //      reachable exclusively by service_role — to flip subscription_status.
 //
@@ -55,7 +57,16 @@ import {
 } from "npm:@apple/app-store-server-library@1.4.0";
 
 const BUNDLE_ID = "ekme.TenScrolls";
-const PRODUCT_ID = "ekme.TenScrolls.plus.monthly";
+// Every product this server will activate Plus for — must stay in sync
+// with StoreKitManager.allProductIDs on the client. A purchase for any id
+// outside this set is rejected below with `product_mismatch`; activation
+// itself (activate_subscription_verified) doesn't care which of these was
+// bought, since every plan grants the same `active` status.
+const ALLOWED_PRODUCT_IDS = [
+  "ekme.TenScrolls.plus.monthly",
+  "ekme.TenScrolls.plus.annual",
+  "ekme.TenScrolls.plus.lifetime",
+];
 const APPLE_APP_ID = Deno.env.get("APPLE_APP_ID"); // may be undefined pre-launch
 const ALLOW_XCODE_STOREKIT_TESTING = Deno.env.get("ALLOW_XCODE_STOREKIT_TESTING") === "true";
 
@@ -185,7 +196,7 @@ Deno.serve(async (req) => {
 
   if (!result) {
     const hint = ALLOW_XCODE_STOREKIT_TESTING
-      ? "Tried Production, Sandbox, and Xcode (ALLOW_XCODE_STOREKIT_TESTING is on) — none matched. If this is a local StoreKit Testing run, double-check Configuration.storekit's product ID matches PRODUCT_ID below."
+      ? "Tried Production, Sandbox, and Xcode (ALLOW_XCODE_STOREKIT_TESTING is on) — none matched. If this is a local StoreKit Testing run, double-check Configuration.storekit's product IDs match ALLOWED_PRODUCT_IDS below."
       : "JWS did not verify against Production or Sandbox Apple root certs. If this build is running with a local Configuration.storekit file attached to the Xcode scheme, this is expected — local StoreKit Testing transactions are signed by a local test cert, not Apple's real cert chain, and can never pass this check. Set ALLOW_XCODE_STOREKIT_TESTING=true (dev/pre-launch only, never in production) to allow those too.";
     console.error(`verify-purchase: verification_failed — ${hint}`);
     return new Response(
@@ -201,8 +212,8 @@ Deno.serve(async (req) => {
     // appear in logs for this dev/pre-launch project.
     console.warn(`verify-purchase: ACCEPTED VIA LOCAL XCODE STOREKIT TESTING (unverified) — productId=${payload.productId}, transactionId=${payload.transactionId}, userId will be logged below after auth.`);
   }
-  if (payload.productId !== PRODUCT_ID) {
-    console.error(`verify-purchase: product_mismatch — expected ${PRODUCT_ID}, got ${payload.productId}`);
+  if (!ALLOWED_PRODUCT_IDS.includes(payload.productId)) {
+    console.error(`verify-purchase: product_mismatch — expected one of [${ALLOWED_PRODUCT_IDS.join(", ")}], got ${payload.productId}`);
     return new Response(
       JSON.stringify({ success: false, error: "product_mismatch", message: "This purchase doesn't match TenScrolls Plus." }),
       { status: 400 },
@@ -232,6 +243,7 @@ Deno.serve(async (req) => {
     p_user_id: userId,
     p_original_transaction_id: String(payload.originalTransactionId),
     p_latest_transaction_id: String(payload.transactionId),
+    p_product_id: payload.productId,
   });
 
   if (rpcError) {

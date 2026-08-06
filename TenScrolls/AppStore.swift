@@ -95,6 +95,34 @@ final class AppStore: ObservableObject {
     let messaging = SupabaseMessaging()
     let subscription = SupabaseSubscription()
     let notifier = NotificationManager()
+    let featureGates = FeatureGateStore()
+    let pricingConfig = PricingConfigStore()
+
+    /// Synchronous, MainActor-published mirror of `featureGates`' live
+    /// table — see `isAccessible(_:)`. Empty until the first successful
+    /// `refreshFeatureGates()` call (kicked off from `init` and every
+    /// `onAppForeground()`), during which `isAccessible(_:)` falls back to
+    /// `AppFeature.defaultRequiresPlus`, which is seeded to match exactly
+    /// so there's no visible behavior gap while this is still loading.
+    @Published private(set) var featureGateOverrides: [String: Bool] = [:]
+
+    /// Synchronous, MainActor-published mirror of `pricingConfig`'s live
+    /// `pricing_config` row — trial length, featured plan, plan badges, and
+    /// which products are currently offered. See `PricingConfigStore` for
+    /// the fallback chain; `.compiledDefault` until the first successful
+    /// `refreshPricingConfig()` call, kicked off from `init` and every
+    /// `onAppForeground()`, same cadence as `featureGateOverrides`.
+    @Published private(set) var pricingConfigSnapshot: PricingConfig = .compiledDefault
+
+    /// Which plan ("Monthly"/"Annual"/"Lifetime") the current server
+    /// record says was last activated — mirrors
+    /// `SubscriptionInfo.purchasedPlanLabel` from the most recent
+    /// `refreshSubscriptionStatus()` call. `nil` for a free/trialing reader
+    /// who's never completed a purchase. Purely informational (see
+    /// `SubscriptionModels.swift`'s doc comment) — every plan grants
+    /// identical access, this just labels which one for display (e.g. the
+    /// Settings version footer).
+    @Published private(set) var purchasedPlanLabel: String? = nil
     
     /// Set when the Day 3 trial offer should be presented
     @Published var shouldShowTrialOffer: Bool = false
@@ -171,6 +199,20 @@ final class AppStore: ObservableObject {
         // is intentionally never awaited or cancelled here.
         Task { [weak self] in
             await self?.observeStoreKitEntitlementChanges()
+        }
+
+        // Best-effort initial load so `isAccessible(_:)` reflects the live
+        // table (rather than just compiled defaults) as early as possible.
+        // `onAppForeground()` repeats this on every subsequent foreground.
+        Task { [weak self] in
+            await self?.refreshFeatureGates()
+        }
+
+        // Same idea for pricing_config — best-effort initial load so
+        // paywall views reflect live trial length/featured plan/badges as
+        // early as possible rather than only the compiled default.
+        Task { [weak self] in
+            await self?.refreshPricingConfig()
         }
     }
 
@@ -1019,12 +1061,39 @@ final class AppStore: ObservableObject {
         }
     }
 
+    /// Leaves a group (self-removal, available to any member including the
+    /// creator). Removes it from `myReadingGroups` locally on success —
+    /// this is correct whether the server deleted the group outright
+    /// (last member leaving) or just removed this one membership row.
+    func leaveReadingGroup(id: UUID) async -> GroupActionResult {
+        let result = await sharing.leaveGroup(id: id)
+        guard result.success else {
+            return .failure(Self.friendlyGroupError(result.error ?? "unknown_error"))
+        }
+        myReadingGroups.removeAll { $0.group_id == id }
+        return .success("Left the group.")
+    }
+
+    /// Creator-only force-delete, regardless of remaining members. The RPC
+    /// itself enforces the creator check; a non-creator gets `not_authorized`
+    /// back rather than the client trying to guess who created the group.
+    func deleteReadingGroup(id: UUID) async -> GroupActionResult {
+        let result = await sharing.deleteGroup(id: id)
+        guard result.success else {
+            return .failure(Self.friendlyGroupError(result.error ?? "unknown_error"))
+        }
+        myReadingGroups.removeAll { $0.group_id == id }
+        return .success("Group deleted.")
+    }
+
     private static func friendlyGroupError(_ code: String) -> String {
         switch code {
         case "no_identity": return "Set your trader handle first, then try again."
         case "group_not_found": return "No group found with that code."
         case "name_required": return "Give the group a name first."
         case "network_error": return "Couldn't reach the server. Try again shortly."
+        case "not_a_member": return "You're not in that group anymore."
+        case "not_authorized": return "Only the group's creator can delete it."
         default: return "Something went wrong. Try again shortly."
         }
     }
@@ -1077,9 +1146,14 @@ final class AppStore: ObservableObject {
     /// Sends a DM and refreshes the inbox on success so the new message's
     /// preview shows up immediately. Returns the server's error code on
     /// failure (e.g. "not_mutual_friends") so the caller can show something
-    /// more specific than a generic toast, or nil on success.
+    /// more specific than a generic toast, or nil on success. Gated by
+    /// AppFeature.caravanDirectMessage — defaults to `false` (free) since
+    /// there's no DM UI shipped yet to have gated in the first place; this
+    /// exists so whichever view eventually calls this is covered by the
+    /// same table row from day one, no extra wiring needed later.
     @discardableResult
     func sendDirectMessage(toCode: String, body: String) async -> String? {
+        guard isAccessible(.caravanDirectMessage) else { return "plus_required" }
         let error = await messaging.sendDirectMessage(toCode: toCode, body: body)
         if error == nil {
             await refreshDMThreads()
@@ -1101,12 +1175,29 @@ final class AppStore: ObservableObject {
     }
 
     // MARK: - Subscription & Monetization
-    
+
+    /// Checks Apple's own on-device entitlement truth directly via
+    /// StoreKit — no Supabase round trip, no sign-in required, and it
+    /// works offline (StoreKit resolves `Transaction.currentEntitlements`
+    /// from its on-device receipt cache). `AppState.hasPlusAccess` ORs
+    /// this in alongside the server-verified `cachedSubscriptionStatus`,
+    /// so a real Apple entitlement keeps unlocking Plus content even when
+    /// the backend can't be reached. Called from `onAppForeground()`
+    /// *before* the network-dependent `refreshSubscriptionStatus()`, so
+    /// local truth is established first regardless of connectivity.
+    func refreshLocalEntitlement() async {
+        let active = await StoreKitManager.shared.hasActiveEntitlement()
+        guard state.localEntitlementActive != active else { return }
+        state.localEntitlementActive = active
+        afterMutation()
+    }
+
     /// Fetches and caches the user's current subscription status
     func refreshSubscriptionStatus() async {
         do {
             let info = try await subscription.fetchSubscriptionStatus()
             state.cachedSubscriptionStatus = info.subscriptionStatus
+            purchasedPlanLabel = info.purchasedPlanLabel
             afterMutation()
             
             // Check for trial expiry
@@ -1138,9 +1229,41 @@ final class AppStore: ObservableObject {
     /// `observeStoreKitEntitlementChanges()` below (event-driven, while the
     /// app is already running). Both funnel through here so the downgrade
     /// logic — and its toast — exist in exactly one place.
+    ///
+    /// DEBUG-only guard: `Transaction.currentEntitlements` only reflects
+    /// local Xcode StoreKit Testing transactions (`Configuration.storekit`)
+    /// while the app is launched *through Xcode* with that config attached
+    /// to the scheme's LaunchAction. Stop the debug session, or relaunch by
+    /// tapping the app icon directly, and `hasActiveEntitlement()` comes
+    /// back empty even though nothing about the "purchase" actually
+    /// changed — this function would then read that as a cancellation and
+    /// auto-lapse a subscription that just activated moments earlier (see
+    /// the `apple_original_transaction_id = "5"` / `"0"` style sequential
+    /// IDs that give away a local test transaction, versus Apple's real
+    /// long numeric ones). Real sandbox/production entitlements don't have
+    /// this problem — Apple's own receipt cache persists them independent
+    /// of Xcode — so this only needs to skip the *server* deactivation call
+    /// in DEBUG builds; the local on-device grant still clears immediately
+    /// either way, matching real StoreKit truth for this process.
     private func reconcileStoreKitEntitlement() async {
         let stillActive = await StoreKitManager.shared.hasActiveEntitlement()
         guard !stillActive else { return }
+        // Clear the local grant first — this is on-device StoreKit truth,
+        // not a network call, so a revoked/refunded/expired entitlement
+        // stops unlocking content immediately even if the Supabase call
+        // below can't be reached.
+        if state.localEntitlementActive == true {
+            state.localEntitlementActive = false
+            afterMutation()
+        }
+        #if DEBUG
+        // Don't propagate a missing local entitlement to the server while
+        // debugging — see the doc comment above. Local StoreKit Testing
+        // sessions routinely (and harmlessly) drop entitlements on
+        // relaunch outside Xcode; treating that as a real cancellation
+        // would fight every manual purchase test.
+        return
+        #else
         do {
             let result = try await subscription.deactivateSubscription()
             if result.changed {
@@ -1153,6 +1276,7 @@ final class AppStore: ObservableObject {
             // event will retry. subscription_status stays stale in the
             // meantime, same as any other best-effort sync in this app.
         }
+        #endif
     }
 
     /// Starts the long-lived StoreKit transaction listener for the app's
@@ -1174,7 +1298,12 @@ final class AppStore: ObservableObject {
                 state.cachedSubscriptionStatus = .trialing
                 state.hasShownTrialOffer = true
                 afterMutation()
-                showToast("Trial started! Enjoy full access for 10 days.")
+                // Prefer the server's own trial_days (the value it actually
+                // applied to trial_end_date) over the client's cached
+                // pricing config, which could theoretically be stale by a
+                // few minutes if Eamon just changed it in the dashboard.
+                let days = result.trialDays ?? pricingConfigSnapshot.trialDays
+                showToast("Trial started! Enjoy full access for \(days) days.")
                 return true
             } else {
                 showToast(result.message ?? "Couldn't start trial. Try again.")
@@ -1188,10 +1317,19 @@ final class AppStore: ObservableObject {
     
     /// Activates Plus subscription after a successful IAP purchase.
     /// `signedTransaction` is StoreKit's signed JWS for the completed
-    /// purchase (see `StoreKitManager.PurchaseOutcome.success`) — the server
-    /// re-verifies it against Apple's certificates before activating
-    /// anything; a locally-successful purchase alone is never trusted.
+    /// purchase (see `StoreKitManager.PurchaseOutcome.success`) — by the
+    /// time it reaches here, Apple's own on-device verification has already
+    /// cleared it (see `StoreKitManager.purchase()`), so we grant local
+    /// access immediately rather than making the reader wait on Supabase.
+    /// The server call below is still attempted for the "real" activation
+    /// (cross-device sync, analytics, fraud checks) — a network failure
+    /// there is treated as best-effort and doesn't undo the local grant; an
+    /// *explicit* server denial (e.g. this transaction is already bound to
+    /// a different account) does, since that's not a connectivity problem.
     func activateSubscription(signedTransaction: String) async -> Bool {
+        state.localEntitlementActive = true
+        afterMutation()
+
         do {
             let result = try await subscription.activateSubscription(signedTransaction: signedTransaction)
             if result.success {
@@ -1200,11 +1338,19 @@ final class AppStore: ObservableObject {
                 showToast("Welcome to Plus! Full access unlocked.")
                 return true
             }
+            // Explicit denial from the server, not a connectivity failure —
+            // don't leave the local grant in place.
+            state.localEntitlementActive = false
+            afterMutation()
             showToast(result.message ?? "Couldn't verify your purchase. Contact support.")
             return false
         } catch {
-            showToast("Couldn't activate subscription. Contact support.")
-            return false
+            // Server unreachable. Apple already verified the purchase
+            // on-device, so access stays unlocked locally; the next
+            // foreground poll or transaction-update event retries the
+            // server sync.
+            showToast("You're all set! We'll finish syncing with our server once you're back online.")
+            return true
         }
     }
     
@@ -1240,8 +1386,12 @@ final class AppStore: ObservableObject {
     }
     
     /// Checks if user can access a specific scroll. Scroll I is always free —
-    /// it's the hook, and gating it hurt conversion more than it helped. Every
-    /// other scroll (II+) requires an active Plus subscription or trial. The
+    /// it's the hook, and gating it hurt conversion more than it helped, and
+    /// it's hardcoded here rather than routed through `feature_gates` (see
+    /// `AppFeature.scrollContent`'s doc comment) so it can never be flipped
+    /// gated by a table edit. Every other scroll (II+) goes through
+    /// `isAccessible(.scrollContent)` — Plus/trial subscribers, or anyone
+    /// while that feature's row is set `requires_plus = false`. The
     /// day-progress unlock (`scroll.status`) still governs which scroll is
     /// next in the sequence; this is the subscription gate layered on top.
     /// Kept `async` (no network round trip needed anymore) so call sites
@@ -1250,8 +1400,8 @@ final class AppStore: ObservableObject {
         if scrollId == 1 {
             return ScrollAccess(scrollId: scrollId, isAccessible: true, reason: .unlocked)
         }
-        if state.hasPlusAccess {
-            return ScrollAccess(scrollId: scrollId, isAccessible: true, reason: .trialActive)
+        if isAccessible(.scrollContent) {
+            return ScrollAccess(scrollId: scrollId, isAccessible: true, reason: state.hasPlusAccess ? .trialActive : .unlocked)
         }
         return ScrollAccess(
             scrollId: scrollId,
@@ -1259,10 +1409,48 @@ final class AppStore: ObservableObject {
             reason: .subscriptionRequired(daysCompleted: state.totalDaysCompleted)
         )
     }
-    
-    /// Call this on app foreground and after session completion
+
+    /// The single choke point every gateable feature in the app should
+    /// check through — see `AppFeature`'s doc comment for the full map and
+    /// `feature_gates_registry` migration for the live table this mirrors.
+    /// `false` for a feature currently means "go show the Plus paywall",
+    /// not "hide the feature entirely" — callers decide what to do with
+    /// that themselves (see e.g. `ContentView.attemptOpenScroll`).
+    func isAccessible(_ feature: AppFeature) -> Bool {
+        let requiresPlus = featureGateOverrides[feature.rawValue] ?? feature.defaultRequiresPlus
+        return !requiresPlus || state.hasPlusAccess
+    }
+
+    /// Refetches `feature_gates` and republishes the merged result so
+    /// `isAccessible(_:)` reflects any edits made directly in the Supabase
+    /// dashboard. Called once at launch (`init`) and every
+    /// `onAppForeground()`, same cadence as subscription status — best
+    /// effort, same as everything else in that refresh cycle.
+    func refreshFeatureGates() async {
+        await featureGates.refresh()
+        featureGateOverrides = await featureGates.snapshot()
+    }
+
+    /// Refetches `pricing_config` and republishes the merged result so
+    /// paywall views reflect any edits made directly in the Supabase
+    /// dashboard (trial length, featured plan, badges, offered products).
+    /// Called once at launch (`init`) and every `onAppForeground()`, same
+    /// cadence as `refreshFeatureGates()` — best effort, same as everything
+    /// else in that refresh cycle.
+    func refreshPricingConfig() async {
+        await pricingConfig.refresh()
+        pricingConfigSnapshot = await pricingConfig.snapshot()
+    }
+
+    /// Call this on app foreground and after session completion. Local
+    /// entitlement is refreshed first — it's network-independent — so
+    /// `hasPlusAccess` reflects Apple's own truth even if the
+    /// Supabase-backed `refreshSubscriptionStatus()` right after it fails.
     func onAppForeground() async {
+        await refreshLocalEntitlement()
         await refreshSubscriptionStatus()
+        await refreshFeatureGates()
+        await refreshPricingConfig()
         checkEngagementMilestones()
     }
 }

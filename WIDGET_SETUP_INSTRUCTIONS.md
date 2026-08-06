@@ -1,5 +1,14 @@
 # Widget Extension Setup Instructions
 
+> **Status (corrected 2026-08-04): SUPERSEDED / OBSOLETE.** This describes
+> creating the `TenScrollsWidget` extension target from scratch. That target
+> already exists and is configured — `TenScrollsWidget.entitlements`,
+> `TenScrollsWidget/Info.plist`, and the `TenScrollsWidgetExtension.xcscheme`
+> are all present in the project. For the widget's actual build
+> configuration (including the config-driven app group identifier), see
+> `WIDGET_BUILD_FIX.md` instead. Kept here for historical reference only;
+> safe to delete.
+
 ## Problem
 The widget files exist but the widget extension target is not configured in the Xcode project. This is why widgets don't appear in the widget gallery.
 

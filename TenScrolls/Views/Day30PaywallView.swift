@@ -13,10 +13,18 @@ struct Day30PaywallView: View {
     @Environment(\.dismiss) private var dismiss
     @State private var isActivating = false
     @State private var percentile: Int? = nil
-    /// Localized price from StoreKit (e.g. "$4.99/mo"), replacing the
-    /// hardcoded "$4.99/month" once the product has loaded. Falls back to
-    /// the hardcoded string while `nil`, so the paywall never shows a blank.
-    @State private var storePrice: String? = nil
+    /// Localized price per plan (e.g. `"ekme.TenScrolls.plus.annual":
+    /// "$39.99/yr"`), keyed by product id, replacing the old single
+    /// hardcoded "$4.99/month" string now that the paywall offers every
+    /// plan in `pricingConfigSnapshot.activeProductIds`, not just monthly.
+    /// A missing entry (still loading) shows an ellipsis placeholder rather
+    /// than a blank row.
+    @State private var planPrices: [String: String] = [:]
+    /// Which plan is currently chosen — defaults to
+    /// `pricingConfigSnapshot.featuredProductId` once that's loaded (see
+    /// `.task` below), so the paywall opens with the plan Eamon wants
+    /// highlighted already selected rather than requiring a tap.
+    @State private var selectedProductId: String? = nil
 
     private var theme: ThemeOption { Palette.theme(for: store.state.activeThemeId) }
     /// Whether there's any accumulated progress worth anchoring FOMO copy
@@ -86,13 +94,22 @@ struct Day30PaywallView: View {
                 .padding(.vertical, 24)
                 .padding(.horizontal, 24)
                 
-                // Pricing
-                Text(storePrice ?? "$4.99/month")
-                    .font(.title2.bold())
-                
+                // Pricing — one row per plan currently offered
+                // (`pricingConfigSnapshot.activeProductIds`), each showing
+                // StoreKit's own live price and, for the featured plan,
+                // its badge (e.g. "BEST VALUE") from `pricingConfigSnapshot`.
+                VStack(spacing: 10) {
+                    ForEach(store.pricingConfigSnapshot.activeProductIds, id: \.self) { productId in
+                        planRow(productId)
+                    }
+                }
+                .padding(.horizontal, 24)
+                .padding(.top, 4)
+
                 Text("Cancel anytime")
                     .font(.caption)
                     .foregroundStyle(.secondary)
+                    .padding(.top, 10)
                     .padding(.bottom, 24)
                 
                 // Actions
@@ -129,8 +146,65 @@ struct Day30PaywallView: View {
         }
         .task {
             await fetchPercentile()
-            storePrice = await StoreKitManager.shared.displayPrice()
+            let offered = store.pricingConfigSnapshot.activeProductIds
+            selectedProductId = offered.contains(store.pricingConfigSnapshot.featuredProductId)
+                ? store.pricingConfigSnapshot.featuredProductId
+                : offered.first
+            for productId in offered {
+                planPrices[productId] = await StoreKitManager.shared.displayPrice(for: productId)
+            }
         }
+    }
+
+    /// One selectable plan row: label ("Monthly"/"Annual"/"Lifetime"),
+    /// StoreKit's live price, and an optional badge from
+    /// `pricingConfigSnapshot.badges`. Tapping selects it for
+    /// `upgradeToPlus()`; the current selection is highlighted with the
+    /// theme's brass accent.
+    private func planRow(_ productId: String) -> some View {
+        let isSelected = selectedProductId == productId
+        return Button {
+            selectedProductId = productId
+        } label: {
+            HStack {
+                VStack(alignment: .leading, spacing: 2) {
+                    HStack(spacing: 6) {
+                        Text(planLabel(for: productId))
+                            .font(.subheadline.bold())
+                        if let badge = store.pricingConfigSnapshot.badge(for: productId) {
+                            Text(badge)
+                                .font(.caption2.bold())
+                                .padding(.horizontal, 6)
+                                .padding(.vertical, 2)
+                                .background(theme.brass.opacity(0.18))
+                                .foregroundStyle(theme.brass)
+                                .clipShape(Capsule())
+                        }
+                    }
+                    Text(planPrices[productId] ?? "\u{2026}")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                Spacer()
+                Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
+                    .foregroundStyle(isSelected ? theme.brass : Color.secondary)
+            }
+            .padding(12)
+            .background {
+                RoundedRectangle(cornerRadius: 12)
+                    .stroke(isSelected ? theme.brass : Color.secondary.opacity(0.3), lineWidth: isSelected ? 1.5 : 1)
+            }
+        }
+        .buttonStyle(.plain)
+    }
+
+    /// Human-readable label derived from the product id's suffix — every
+    /// id in `StoreKitManager.allProductIDs` ends in one of these three.
+    private func planLabel(for productId: String) -> String {
+        if productId.hasSuffix(".monthly") { return "Monthly" }
+        if productId.hasSuffix(".annual") { return "Annual" }
+        if productId.hasSuffix(".lifetime") { return "Lifetime" }
+        return "Plus"
     }
     
     private func fetchPercentile() async {
@@ -155,7 +229,8 @@ struct Day30PaywallView: View {
         isActivating = true
         Task {
             do {
-                let outcome = try await StoreKitManager.shared.purchase()
+                let productId = selectedProductId ?? StoreKitManager.subscriptionProductID
+                let outcome = try await StoreKitManager.shared.purchase(productId: productId)
                 if case .success(let signedTransaction) = outcome {
                     let success = await store.activateSubscription(signedTransaction: signedTransaction)
                     if success {

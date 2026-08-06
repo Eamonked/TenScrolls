@@ -43,7 +43,7 @@ actor SupabaseMessaging {
             }
             return response.mutual ?? false
         } catch {
-            print("⚠️ addFriendLink(\(code)) failed: \(error)")
+            logSupabaseFailure("addFriendLink(\(code)) failed", error)
             return nil
         }
     }
@@ -91,7 +91,7 @@ actor SupabaseMessaging {
             }
             return response.success ? nil : (response.error ?? "unknown_error")
         } catch {
-            print("⚠️ sendDirectMessage(toCode: \(toCode)) failed: \(error)")
+            logSupabaseFailure("sendDirectMessage(toCode: \(toCode)) failed", error)
             return "network_error"
         }
     }

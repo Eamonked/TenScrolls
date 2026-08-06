@@ -31,6 +31,12 @@ struct SubscriptionInfo: Codable, Equatable, Sendable {
     let plusSince: Date?
     let daysUntilTrialEnd: Int
     let isTrialActive: Bool
+    /// Which of `StoreKitManager.allProductIDs` this subscriber activated
+    /// with (added in migration `010_track_purchased_product.sql`), e.g.
+    /// `"ekme.TenScrolls.plus.annual"`. `nil` for a free/trialing reader
+    /// who has never completed a purchase, or for anyone who activated
+    /// before this column existed.
+    let purchasedProductId: String?
     
     var hasAccess: Bool {
         subscriptionStatus.hasAccess
@@ -40,6 +46,17 @@ struct SubscriptionInfo: Codable, Equatable, Sendable {
     var canStartTrial: Bool {
         subscriptionStatus == .free && trialStartDate == nil
     }
+
+    /// Human-readable plan label derived from `purchasedProductId`'s
+    /// suffix ("Monthly"/"Annual"/"Lifetime"), for a future "you're on the
+    /// X plan" display. `nil` when there's no purchased plan to label.
+    var purchasedPlanLabel: String? {
+        guard let id = purchasedProductId else { return nil }
+        if id.hasSuffix(".monthly") { return "Monthly" }
+        if id.hasSuffix(".annual") { return "Annual" }
+        if id.hasSuffix(".lifetime") { return "Lifetime" }
+        return nil
+    }
     
     private enum CodingKeys: String, CodingKey {
         case subscriptionStatus = "subscription_status"
@@ -48,6 +65,7 @@ struct SubscriptionInfo: Codable, Equatable, Sendable {
         case plusSince = "plus_since"
         case daysUntilTrialEnd = "days_until_trial_end"
         case isTrialActive = "is_trial_active"
+        case purchasedProductId = "apple_product_id"
     }
 }
 
